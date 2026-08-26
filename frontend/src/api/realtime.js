@@ -1,5 +1,11 @@
 export function createRealtimeClient({ onEvent, onStatus, token = '', url = '' }) {
-  const endpoint = url || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:3001/api/realtime`
+  const configuredUrl = url || import.meta.env.VITE_WS_URL || ''
+  const browserHost = window.location.hostname
+  const browserProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const defaultEndpoint = `${browserProtocol}://${browserHost}:3001/api/realtime`
+  const endpoint = configuredUrl && !/^(wss?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?\/?.*$/i.test(configuredUrl)
+    ? configuredUrl
+    : defaultEndpoint
   let socket
   let stopped = false
   let reconnectTimer

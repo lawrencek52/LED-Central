@@ -62,7 +62,12 @@ export function createApp({
   });
   app.locals.metrics = metrics;
 
-  app.use(cors({ origin: config.corsOrigins }));
+  app.use(cors({
+    origin: config.corsOrigins.includes('*') ? true : config.corsOrigins,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'If-Match-Revision', 'X-Requested-With'],
+    credentials: false,
+  }));
   app.use(express.json());
   app.use((req, res, next) => {
     req.requestId = uuidv4();

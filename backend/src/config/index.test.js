@@ -5,13 +5,13 @@ import { loadConfig } from './index.js';
 test('loads defaults for an empty environment', () => {
   assert.deepEqual(loadConfig({}), {
     nodeEnv: 'development',
-    host: '127.0.0.1',
+    host: '0.0.0.0',
     port: 3001,
     apiTimeoutMs: 30000,
     effectDatabasePath: './data/led-central.db',
     authToken: '',
     logLevel: 'info',
-    corsOrigins: ['http://localhost:5173']
+    corsOrigins: ['*']
   });
 });
 
@@ -34,6 +34,22 @@ test('parses and normalizes configured values', () => {
       authToken: '',
       logLevel: 'warn',
       corsOrigins: ['https://led.example', 'https://admin.example']
+    }
+  );
+});
+
+test('accepts wildcard and LAN-facing development origins', () => {
+  assert.deepEqual(
+    loadConfig({ CORS_ORIGIN: '*' }),
+    {
+      nodeEnv: 'development',
+      host: '0.0.0.0',
+      port: 3001,
+      apiTimeoutMs: 30000,
+      effectDatabasePath: './data/led-central.db',
+      authToken: '',
+      logLevel: 'info',
+      corsOrigins: ['*']
     }
   );
 });

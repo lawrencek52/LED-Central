@@ -4,13 +4,13 @@ dotenv.config();
 
 const DEFAULTS = {
   nodeEnv: 'development',
-  host: '127.0.0.1',
+  host: '0.0.0.0',
   port: 3001,
   apiTimeoutMs: 30000,
   effectDatabasePath: './data/led-central.db',
   authToken: '',
   logLevel: 'info',
-  corsOrigins: ['http://localhost:5173']
+  corsOrigins: ['*']
 };
 
 const LOG_LEVELS = new Set(['debug', 'info', 'warn', 'error']);
@@ -35,7 +35,7 @@ function origins(value) {
     throw new Error('CORS_ORIGIN must contain at least one origin');
   }
 
-  return values;
+  return values.length === 1 && values[0] === '*' ? ['*'] : values;
 }
 
 export function loadConfig(environment = process.env) {

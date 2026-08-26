@@ -1,23 +1,51 @@
-const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+const browserHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
+const browserProtocol = typeof window !== 'undefined' ? window.location.protocol : 'http:'
+const defaultApiBaseUrl = `${browserProtocol}//${browserHost}:3001/api`
+const configuredApiUrl = import.meta.env.VITE_API_URL
+const apiBaseUrl = configuredApiUrl && !/^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?\/?.*$/i.test(configuredApiUrl)
+  ? configuredApiUrl
+  : defaultApiBaseUrl
 const apiToken = import.meta.env.VITE_API_TOKEN || ''
 
 async function request(path, options = {}) {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}),
-      ...(options.headers || {}),
-    },
-  })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const detailText = body.details ? `: ${Object.entries(body.details).map(([field, detail]) => `${field} ${detail}`).join(', ')}` : ''
-    const error = new Error(`${body.error || `Request failed with status ${response.status}`}${detailText}`)
-    error.details = body.details
-    throw error
+  const url = `${apiBaseUrl}${path}`
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}),
+        ...(options.headers || {}),
+      },
+    })
+
+    let body = {}
+    try {
+      body = await response.json()
+    } catch {
+      const text = await response.text().catch(() => '')
+      if (text) {
+        body = { error: text }
+      }
+    }
+
+    if (!response.ok) {
+      const detailText = body.details ? `: ${Object.entries(body.details).map(([field, detail]) => `${field} ${detail}`).join(', ')}` : ''
+      const reason = body.error || body.message || `HTTP ${response.status}`
+      const error = new Error(`Failed to fetch ${path} from ${url}: ${reason}${detailText}`)
+      error.details = body.details
+      throw error
+    }
+
+    return body
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Failed to fetch')) {
+      throw error
+    }
+
+    throw new Error(`Failed to fetch ${path} from ${url}: ${error instanceof Error ? error.message : 'network request failed'}`)
   }
-  return body
 }
 
 export const apiClient = {
