@@ -3,16 +3,17 @@ const apiToken = import.meta.env.VITE_API_TOKEN || ''
 
 async function request(path, options = {}) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
       ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}),
       ...(options.headers || {}),
     },
-    ...options,
   })
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
-    const error = new Error(body.error || `Request failed with status ${response.status}`)
+    const detailText = body.details ? `: ${Object.entries(body.details).map(([field, detail]) => `${field} ${detail}`).join(', ')}` : ''
+    const error = new Error(`${body.error || `Request failed with status ${response.status}`}${detailText}`)
     error.details = body.details
     throw error
   }
