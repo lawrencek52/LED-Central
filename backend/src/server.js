@@ -7,7 +7,7 @@ import { ControllerService } from './application/controller-service.js';
 import { EffectDistributionService } from './application/effect-distribution-service.js';
 import { createControllerRouter } from './api/controllers.js';
 import { createDistributionRouter } from './api/distribution.js';
-import { WebSocketControllerGateway } from './infrastructure/controllers/websocket-gateway.js';
+import { TcpControllerGateway } from './infrastructure/controllers/tcp-controller-gateway.js';
 import { EventHub } from './infrastructure/realtime/event-hub.js';
 import { attachRealtimeServer } from './infrastructure/realtime/websocket-server.js';
 import { SqliteEffectRepository } from './infrastructure/persistence/sqlite-effect-repository.js';
@@ -26,7 +26,7 @@ export function createApp({
   }),
   distributionService = new EffectDistributionService({
     controllerService,
-    gateway: new WebSocketControllerGateway(),
+    gateway: new TcpControllerGateway(),
     eventHub
   })
 } = {}) {

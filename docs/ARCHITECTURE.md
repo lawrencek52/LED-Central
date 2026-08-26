@@ -67,22 +67,27 @@ import Express, WebSocket libraries, or database clients.
 
 ### Controller Gateway
 
-The gateway is an adapter around the existing NightDriverStrip network
-protocol. Its interface should be device-oriented and transport-independent:
+The gateway is an adapter around the existing NightDriverStrip TCP network
+protocol. Its interface is device-oriented and transport-independent:
 
 ```text
 connect(controller)
 disconnect(controllerId)
 getStatus(controllerId)
-sendFrame(controllerId, frame)
+sendFrame(controller, frame)
 sendFrames(controller, frames)
 ```
 
-Each configured controller gets one managed connection. The gateway owns
+Each configured controller gets one managed TCP connection. The gateway owns
 connection lifecycle, reconnect backoff, send queue limits, timeouts, and
 normalization of device errors. A controller is `online` only after a
 successful connection or health response; a configured controller may remain
 `offline` without being deleted.
+
+NightDriverStrip devices listen for raw TCP pixel packets on port 49152. A
+pixel packet uses command `3`, a channel bitmask, an RGB pixel count, a
+seconds/microseconds timestamp, and RGB bytes. The browser-facing WebSocket is
+used only for operator commands and realtime events.
 
 ## Core Domain Model
 
@@ -183,8 +188,8 @@ configured.
 ## Delivery Order
 
 1. Extract configuration, validation, error handling, and controller repository.
-2. Add controller gateway with a fake adapter for tests and a real WebSocket
-   adapter for NightDriverStrip devices.
+2. Add controller gateway with a fake adapter for tests and a real TCP adapter
+  for NightDriverStrip devices.
 3. Replace the Vite demo with the controller dashboard and API client.
 4. Add persistent controller and canvas configuration.
 5. Implement canvas mapping with fixtures for series, parallel, and serpentine

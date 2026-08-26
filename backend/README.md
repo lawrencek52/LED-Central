@@ -90,6 +90,11 @@ The endpoint returns `202` when all targets accept the batch, `207` for a
 partial delivery, and `503` when every target fails. Device protocol details
 remain inside the controller gateway.
 
+The gateway has two adapters: `TcpControllerGateway` sends NightDriverStrip's
+raw TCP pixel packets, while `FakeControllerGateway`
+records frames and simulates connection failures for tests. Both implement
+`connect`, `disconnect`, `getStatus`, `sendFrame`, and `sendFrames`.
+
 ### Effect Library
 
 - `GET /api/effects` - List stored effect definitions
