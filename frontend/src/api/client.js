@@ -1,0 +1,25 @@
+const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+
+async function request(path, options = {}) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options,
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const error = new Error(body.error || `Request failed with status ${response.status}`)
+    error.details = body.details
+    throw error
+  }
+  return body
+}
+
+export const apiClient = {
+  getHealth: () => request('/health'),
+  listControllers: () => request('/controllers'),
+  createController: (controller) => request('/controllers', {
+    method: 'POST',
+    body: JSON.stringify(controller),
+  }),
+  deleteController: (id) => request(`/controllers/${id}`, { method: 'DELETE' }),
+}

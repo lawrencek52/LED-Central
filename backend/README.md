@@ -107,6 +107,13 @@ Effect definitions are stored in SQLite at `EFFECT_DATABASE_PATH`. The first
 startup seeds `solid`, `gradient`, and `wave` definitions. Parameters contain
 renderer metadata and are intentionally separate from frame rendering.
 
+### Persistent Controllers and Canvases
+
+Controllers and canvases are stored in the same SQLite database. Canvases use
+one-based revisions; send `If-Match-Revision` with `PUT` or `PATCH` to reject
+updates based on stale configuration. Canvas mappings contain a `controllerId`
+and zero-based `stripIndex`, with optional `rotation` and `reversed` fields.
+
 ### Realtime WebSocket
 
 Connect a browser client to `ws://localhost:3001/api/realtime`. The server

@@ -1,18 +1,18 @@
 import { v4 as uuidv4 } from 'uuid';
 
 export class ControllerService {
-  constructor({ controllers = new Map(), idFactory = uuidv4, now = () => new Date() } = {}) {
-    this.controllers = controllers;
+  constructor({ repository, controllers = new Map(), idFactory = uuidv4, now = () => new Date() } = {}) {
+    this.repository = repository || new MapControllerRepository(controllers);
     this.idFactory = idFactory;
     this.now = now;
   }
 
   list() {
-    return Array.from(this.controllers.values());
+    return this.repository.list();
   }
 
   get(id) {
-    return this.controllers.get(id) ?? null;
+    return this.repository.get(id);
   }
 
   create({ name, host, port }) {
@@ -27,8 +27,7 @@ export class ControllerService {
       lastSeen: timestamp
     };
 
-    this.controllers.set(controller.id, controller);
-    return controller;
+    return this.repository.save(controller);
   }
 
   update(id, changes) {
@@ -38,7 +37,29 @@ export class ControllerService {
       return null;
     }
 
-    Object.assign(controller, changes);
+    return this.repository.save({ ...controller, ...changes });
+  }
+
+  remove(id) {
+    return this.repository.remove(id);
+  }
+}
+
+class MapControllerRepository {
+  constructor(controllers) {
+    this.controllers = controllers;
+  }
+
+  list() {
+    return Array.from(this.controllers.values());
+  }
+
+  get(id) {
+    return this.controllers.get(id) ?? null;
+  }
+
+  save(controller) {
+    this.controllers.set(controller.id, controller);
     return controller;
   }
 

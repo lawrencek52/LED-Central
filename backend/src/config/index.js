@@ -7,7 +7,7 @@ const DEFAULTS = {
   host: '127.0.0.1',
   port: 3001,
   apiTimeoutMs: 30000,
-  effectDatabasePath: './data/effects.db',
+  effectDatabasePath: './data/led-central.db',
   logLevel: 'info',
   corsOrigins: ['http://localhost:5173']
 };

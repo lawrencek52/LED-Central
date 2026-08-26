@@ -14,9 +14,18 @@ import { SqliteEffectRepository } from './infrastructure/persistence/sqlite-effe
 import { EffectLibraryService } from './application/effect-library-service.js';
 import { defaultEffects } from './domain/effects/default-effects.js';
 import { createEffectRouter } from './api/effects.js';
+import { createCanvasRouter } from './api/canvases.js';
+import { CanvasService } from './application/canvas-service.js';
+import { SqliteControllerRepository } from './infrastructure/persistence/sqlite-controller-repository.js';
+import { SqliteCanvasRepository } from './infrastructure/persistence/sqlite-canvas-repository.js';
 
 export function createApp({
-  controllerService = new ControllerService(),
+  controllerService = new ControllerService({
+    repository: new SqliteControllerRepository({ databasePath: config.effectDatabasePath })
+  }),
+  canvasService = new CanvasService({
+    repository: new SqliteCanvasRepository({ databasePath: config.effectDatabasePath })
+  }),
   eventHub = new EventHub(),
   effectService = new EffectLibraryService({
     repository: new SqliteEffectRepository({
@@ -34,6 +43,7 @@ export function createApp({
   app.locals.eventHub = eventHub;
   app.locals.distributionService = distributionService;
   app.locals.effectService = effectService;
+  app.locals.canvasService = canvasService;
 
   app.use(cors({ origin: config.corsOrigins }));
   app.use(express.json());
@@ -50,6 +60,7 @@ export function createApp({
   app.use('/api/controllers', createControllerRouter({ controllerService }));
   app.use('/api/distribution', createDistributionRouter({ distributionService }));
   app.use('/api/effects', createEffectRouter({ effectService }));
+  app.use('/api/canvases', createCanvasRouter({ canvasService }));
 
   app.use((req, res) => {
     res.status(404).json({
