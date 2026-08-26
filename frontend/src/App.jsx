@@ -3,7 +3,7 @@ import { apiClient } from './api/client'
 import { createRealtimeClient } from './api/realtime'
 import './App.css'
 
-const emptyForm = { name: '', host: '', port: '49152' }
+const emptyForm = { name: '', host: '', port: '49152', strips: '4', ledCounts: ['215', '215', '215', '215'] }
 
 function App() {
   const [controllers, setControllers] = useState([])
@@ -11,6 +11,7 @@ function App() {
   const [form, setForm] = useState(emptyForm)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState(null)
   const [error, setError] = useState('')
   const [realtimeStatus, setRealtimeStatus] = useState('connecting')
   const [lastEvent, setLastEvent] = useState('')
@@ -48,14 +49,34 @@ function App() {
     setSaving(true)
     setError('')
     try {
-      await apiClient.createController({ ...form, port: Number(form.port) })
+      const payload = { ...form, port: Number(form.port), strips: Number(form.strips), ledCounts: form.ledCounts.map(Number) }
+      if (editingId) await apiClient.updateController(editingId, payload)
+      else await apiClient.createController(payload)
       setForm(emptyForm)
+      setEditingId(null)
       await loadDashboard()
     } catch (requestError) {
       setError(requestError.message)
     } finally {
       setSaving(false)
     }
+  }
+
+  function editController(controller) {
+    const ledCounts = Array.from({ length: controller.strips || 4 }, (_, index) => String(controller.ledCounts?.[index] || '215'))
+    setEditingId(controller.id)
+    setForm({
+      name: controller.name,
+      host: controller.host,
+      port: String(controller.port),
+      strips: String(controller.strips),
+      ledCounts,
+    })
+  }
+
+  function changeStripCount(value) {
+    const count = Math.max(1, Math.min(16, Number(value) || 1))
+    setForm({ ...form, strips: String(count), ledCounts: Array.from({ length: count }, (_, index) => form.ledCounts[index] || '215') })
   }
 
   async function handleDelete(id) {
@@ -116,8 +137,8 @@ function App() {
                 <article className="controller-row" key={controller.id}>
                   <div className="controller-icon" aria-hidden="true">{controller.name.slice(0, 1).toUpperCase()}</div>
                   <div className="controller-details"><h3>{controller.name}</h3><p>{controller.host}:{controller.port}</p></div>
-                  <div className="controller-meta"><span className={`connection-state ${controller.connected ? 'online' : ''}`}><i />{controller.connected ? 'Online' : 'Offline'}</span><span>{controller.strips || 0} strips</span></div>
-                  <button className="icon-action" type="button" onClick={() => handleDelete(controller.id)} aria-label={`Remove ${controller.name}`} title="Remove controller">Remove</button>
+                  <div className="controller-meta"><span className={`connection-state ${controller.connected ? 'online' : ''}`}><i />{controller.connected ? 'Online' : 'Offline'}</span><span>{controller.strips || 0} strips</span><span>{(controller.ledCounts || []).join(' / ') || '215'} LEDs</span></div>
+                  <div className="row-actions"><button className="icon-action" type="button" onClick={() => editController(controller)}>Edit</button><button className="icon-action danger" type="button" onClick={() => handleDelete(controller.id)} aria-label={`Remove ${controller.name}`} title="Remove controller">Remove</button></div>
                 </article>
               ))}
             </div>
@@ -125,12 +146,14 @@ function App() {
         </section>
 
         <section className="panel add-panel">
-          <div className="panel-header"><div><p className="eyebrow">Device setup</p><h2>Add controller</h2></div></div>
+          <div className="panel-header"><div><p className="eyebrow">Device setup</p><h2>{editingId ? 'Edit controller' : 'Add controller'}</h2></div></div>
           <form onSubmit={handleSubmit}>
             <label>Display name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Deck lights" /></label>
             <label>Host name or address<input required value={form.host} onChange={(event) => setForm({ ...form, host: event.target.value })} placeholder="deck1.local" /></label>
             <label>TCP port<input required type="number" min="1" max="65535" value={form.port} onChange={(event) => setForm({ ...form, port: event.target.value })} /></label>
-            <button className="primary-button" type="submit" disabled={saving}>{saving ? 'Registering...' : 'Register controller'}</button>
+            <label>Number of strips<input required type="number" min="1" max="16" value={form.strips} onChange={(event) => changeStripCount(event.target.value)} /></label>
+            <fieldset className="strip-fields"><legend>LEDs per strip</legend>{form.ledCounts.map((count, index) => <label key={index}>Strip {index + 1}<input required type="number" min="1" max="4200" value={count} onChange={(event) => { const ledCounts = [...form.ledCounts]; ledCounts[index] = event.target.value; setForm({ ...form, ledCounts }) }} /></label>)}</fieldset>
+            <div className="form-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? 'Saving...' : editingId ? 'Save controller' : 'Register controller'}</button>{editingId && <button className="secondary-button" type="button" onClick={() => { setEditingId(null); setForm(emptyForm) }}>Cancel</button>}</div>
           </form>
           <p className="form-note">NightDriverStrip devices typically listen on TCP port 49152.</p>
         </section>

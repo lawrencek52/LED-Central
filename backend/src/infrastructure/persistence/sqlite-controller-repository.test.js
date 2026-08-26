@@ -19,6 +19,7 @@ test('persists controller configuration across repository instances', () => {
   const second = new SqliteControllerRepository({ databasePath });
   assert.deepEqual(second.get(controller.id), {
     ...controller,
+    ledCounts: [215, 215, 215, 215],
     createdAt: controller.lastSeen,
     updatedAt: controller.lastSeen
   });

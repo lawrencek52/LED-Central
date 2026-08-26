@@ -15,11 +15,16 @@ export class SqliteControllerRepository {
         port INTEGER NOT NULL,
         connected INTEGER NOT NULL DEFAULT 0,
         strips INTEGER NOT NULL DEFAULT 4,
+        led_counts_json TEXT NOT NULL DEFAULT '[215,215,215,215]',
         last_seen TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
     `);
+    const columns = this.database.prepare('PRAGMA table_info(controllers)').all();
+    if (!columns.some(column => column.name === 'led_counts_json')) {
+      this.database.exec("ALTER TABLE controllers ADD COLUMN led_counts_json TEXT NOT NULL DEFAULT '[215,215,215,215]'");
+    }
   }
 
   list() {
@@ -33,19 +38,21 @@ export class SqliteControllerRepository {
 
   save(controller) {
     this.database.prepare(`
-      INSERT INTO controllers (id, name, host, port, connected, strips, last_seen, created_at, updated_at)
-      VALUES (@id, @name, @host, @port, @connected, @strips, @lastSeen, @createdAt, @updatedAt)
+      INSERT INTO controllers (id, name, host, port, connected, strips, led_counts_json, last_seen, created_at, updated_at)
+      VALUES (@id, @name, @host, @port, @connected, @strips, @ledCountsJson, @lastSeen, @createdAt, @updatedAt)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         host = excluded.host,
         port = excluded.port,
         connected = excluded.connected,
         strips = excluded.strips,
+        led_counts_json = excluded.led_counts_json,
         last_seen = excluded.last_seen,
         updated_at = excluded.updated_at
     `).run({
       ...controller,
       connected: controller.connected ? 1 : 0,
+      ledCountsJson: JSON.stringify(controller.ledCounts || Array(controller.strips).fill(215)),
       createdAt: controller.createdAt || controller.lastSeen,
       updatedAt: controller.updatedAt || controller.lastSeen
     });
@@ -69,6 +76,7 @@ function toController(row) {
     port: row.port,
     connected: Boolean(row.connected),
     strips: row.strips,
+    ledCounts: JSON.parse(row.led_counts_json || JSON.stringify(Array(row.strips).fill(215))),
     lastSeen: row.last_seen,
     createdAt: row.created_at,
     updatedAt: row.updated_at

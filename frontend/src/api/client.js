@@ -26,5 +26,9 @@ export const apiClient = {
     method: 'POST',
     body: JSON.stringify(controller),
   }),
+  updateController: (id, controller) => request(`/controllers/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(controller),
+  }),
   deleteController: (id) => request(`/controllers/${id}`, { method: 'DELETE' }),
 }

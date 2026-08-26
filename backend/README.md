@@ -100,9 +100,15 @@ stronger identity layer before exposing the service.
 - `GET /api/controllers` - List all connected controllers
 - `POST /api/controllers` - Register a new controller
 - `GET /api/controllers/:id` - Get controller details
-- `PATCH /api/controllers/:id` - Update controller name, host, or port
+- `PATCH /api/controllers/:id` - Update controller and strip configuration
 - `POST /api/controllers/:id/test` - Test controller connectivity (not yet implemented)
 - `DELETE /api/controllers/:id` - Deregister a controller
+
+Controller configuration also supports `strips` (1-16) and `ledCounts`, an
+array containing one LED count per strip (each 1-4200). Existing controllers
+without LED counts are migrated with four 215-LED strips. When only `strips`
+changes, unspecified strip counts default to 215; when `ledCounts` is supplied,
+its length must match `strips`.
 
 ### Effect Distribution
 

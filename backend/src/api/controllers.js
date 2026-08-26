@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-const controllerFields = ['name', 'host', 'port'];
+const controllerFields = ['name', 'host', 'port', 'strips', 'ledCounts'];
 
 function validateControllerPayload(body, { partial = false } = {}) {
   const errors = {};
@@ -15,6 +15,14 @@ function validateControllerPayload(body, { partial = false } = {}) {
       if (!Number.isInteger(payload.port) || payload.port < 1 || payload.port > 65535) {
         errors.port = 'must be an integer between 1 and 65535';
       }
+    } else if (field === 'strips') {
+      if (!Number.isInteger(payload.strips) || payload.strips < 1 || payload.strips > 16) {
+        errors.strips = 'must be an integer between 1 and 16';
+      }
+    } else if (field === 'ledCounts') {
+      if (!Array.isArray(payload.ledCounts) || payload.ledCounts.length < 1 || payload.ledCounts.length > 16 || payload.ledCounts.some(count => !Number.isInteger(count) || count < 1 || count > 4200)) {
+        errors.ledCounts = 'must contain 1 to 16 integer counts between 1 and 4200';
+      }
     } else if (typeof payload[field] !== 'string' || payload[field].trim() === '') {
       errors[field] = 'must be a non-empty string';
     }
@@ -24,6 +32,14 @@ function validateControllerPayload(body, { partial = false } = {}) {
     const error = new Error('Invalid controller payload');
     error.statusCode = 400;
     error.details = errors;
+    throw error;
+  }
+
+  const stripCount = payload.strips ?? payload.ledCounts?.length;
+  if (stripCount !== undefined && payload.ledCounts !== undefined && payload.ledCounts.length !== stripCount) {
+    const error = new Error('ledCounts length must match strips');
+    error.statusCode = 400;
+    error.details = { ledCounts: 'length must match strips' };
     throw error;
   }
 
@@ -37,6 +53,8 @@ function validateControllerPayload(body, { partial = false } = {}) {
     ...(payload.name === undefined ? {} : { name: payload.name.trim() }),
     ...(payload.host === undefined ? {} : { host: payload.host.trim() }),
     ...(payload.port === undefined ? {} : { port: payload.port })
+    ,...(payload.strips === undefined ? {} : { strips: payload.strips })
+    ,...(payload.ledCounts === undefined ? {} : { ledCounts: payload.ledCounts })
   };
 }
 

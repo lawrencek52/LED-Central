@@ -43,7 +43,7 @@ test('serves controller CRUD and validates requests', async t => {
 
   const created = await request(server, '/api/controllers', {
     method: 'POST',
-    body: JSON.stringify({ name: 'Kitchen', host: '192.168.1.100', port: 49152 })
+    body: JSON.stringify({ name: 'Kitchen', host: '192.168.1.100', port: 49152, strips: 4, ledCounts: [215, 215, 215, 215] })
   });
   assert.equal(created.status, 201);
   assert.equal(created.body.name, 'Kitchen');

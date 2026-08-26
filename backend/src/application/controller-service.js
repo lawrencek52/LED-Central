@@ -15,7 +15,7 @@ export class ControllerService {
     return this.repository.get(id);
   }
 
-  create({ name, host, port }) {
+  create({ name, host, port, strips = 4, ledCounts = Array(strips).fill(215) }) {
     const timestamp = this.now().toISOString();
     const controller = {
       id: this.idFactory(),
@@ -23,7 +23,8 @@ export class ControllerService {
       host,
       port,
       connected: false,
-      strips: 4,
+      strips,
+      ledCounts,
       lastSeen: timestamp
     };
 
@@ -37,12 +38,23 @@ export class ControllerService {
       return null;
     }
 
-    return this.repository.save({ ...controller, ...changes });
+    const updated = { ...controller, ...changes };
+    if (changes.strips !== undefined && changes.ledCounts === undefined) {
+      updated.ledCounts = resizeLedCounts(controller.ledCounts, changes.strips);
+    }
+    if (changes.ledCounts !== undefined) {
+      updated.strips = changes.ledCounts.length;
+    }
+    return this.repository.save(updated);
   }
 
   remove(id) {
     return this.repository.remove(id);
   }
+}
+
+function resizeLedCounts(ledCounts = [], count) {
+  return Array.from({ length: count }, (_, index) => ledCounts[index] || 215);
 }
 
 class MapControllerRepository {
