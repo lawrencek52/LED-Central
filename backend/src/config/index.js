@@ -7,6 +7,7 @@ const DEFAULTS = {
   host: '127.0.0.1',
   port: 3001,
   apiTimeoutMs: 30000,
+  effectDatabasePath: './data/effects.db',
   logLevel: 'info',
   corsOrigins: ['http://localhost:5173']
 };
@@ -58,6 +59,7 @@ export function loadConfig(environment = process.env) {
       'API_TIMEOUT',
       { min: 100, max: 300000 }
     ),
+    effectDatabasePath: environment.EFFECT_DATABASE_PATH?.trim() || DEFAULTS.effectDatabasePath,
     logLevel,
     corsOrigins: origins(environment.CORS_ORIGIN ?? DEFAULTS.corsOrigins.join(','))
   });

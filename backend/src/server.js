@@ -1,12 +1,39 @@
 import express from 'express';
 import cors from 'cors';
+import { createServer } from 'node:http';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from './config/index.js';
 import { ControllerService } from './application/controller-service.js';
+import { EffectDistributionService } from './application/effect-distribution-service.js';
 import { createControllerRouter } from './api/controllers.js';
+import { createDistributionRouter } from './api/distribution.js';
+import { WebSocketControllerGateway } from './infrastructure/controllers/websocket-gateway.js';
+import { EventHub } from './infrastructure/realtime/event-hub.js';
+import { attachRealtimeServer } from './infrastructure/realtime/websocket-server.js';
+import { SqliteEffectRepository } from './infrastructure/persistence/sqlite-effect-repository.js';
+import { EffectLibraryService } from './application/effect-library-service.js';
+import { defaultEffects } from './domain/effects/default-effects.js';
+import { createEffectRouter } from './api/effects.js';
 
-export function createApp({ controllerService = new ControllerService() } = {}) {
+export function createApp({
+  controllerService = new ControllerService(),
+  eventHub = new EventHub(),
+  effectService = new EffectLibraryService({
+    repository: new SqliteEffectRepository({
+      databasePath: config.effectDatabasePath,
+      seedEffects: defaultEffects
+    })
+  }),
+  distributionService = new EffectDistributionService({
+    controllerService,
+    gateway: new WebSocketControllerGateway(),
+    eventHub
+  })
+} = {}) {
   const app = express();
+  app.locals.eventHub = eventHub;
+  app.locals.distributionService = distributionService;
+  app.locals.effectService = effectService;
 
   app.use(cors({ origin: config.corsOrigins }));
   app.use(express.json());
@@ -21,6 +48,8 @@ export function createApp({ controllerService = new ControllerService() } = {}) 
   });
 
   app.use('/api/controllers', createControllerRouter({ controllerService }));
+  app.use('/api/distribution', createDistributionRouter({ distributionService }));
+  app.use('/api/effects', createEffectRouter({ effectService }));
 
   app.use((req, res) => {
     res.status(404).json({
@@ -55,12 +84,19 @@ const app = createApp();
 
 // Start server
 export function startServer() {
-  return app.listen(config.port, config.host, () => {
+  const server = createServer(app);
+  attachRealtimeServer({
+    server,
+    eventHub: app.locals.eventHub,
+    distributionService: app.locals.distributionService
+  });
+  server.listen(config.port, config.host, () => {
     console.log(
       `LED-Central backend server running on http://${config.host}:${config.port}`
     );
     console.log(`API available at http://${config.host}:${config.port}/api`);
   });
+  return server;
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {

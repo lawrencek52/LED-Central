@@ -8,6 +8,7 @@ test('loads defaults for an empty environment', () => {
     host: '127.0.0.1',
     port: 3001,
     apiTimeoutMs: 30000,
+    effectDatabasePath: './data/effects.db',
     logLevel: 'info',
     corsOrigins: ['http://localhost:5173']
   });
@@ -28,6 +29,7 @@ test('parses and normalizes configured values', () => {
       host: '0.0.0.0',
       port: 8080,
       apiTimeoutMs: 5000,
+      effectDatabasePath: './data/effects.db',
       logLevel: 'warn',
       corsOrigins: ['https://led.example', 'https://admin.example']
     }

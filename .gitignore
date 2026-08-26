@@ -10,6 +10,7 @@ dist/
 build/
 .pio/
 .platformio/
+data/
 
 # Environment files
 .env

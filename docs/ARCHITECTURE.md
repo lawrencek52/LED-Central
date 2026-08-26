@@ -75,7 +75,7 @@ connect(controller)
 disconnect(controllerId)
 getStatus(controllerId)
 sendFrame(controllerId, frame)
-sendFrames(controllerId, frames)
+sendFrames(controller, frames)
 ```
 
 Each configured controller gets one managed connection. The gateway owns

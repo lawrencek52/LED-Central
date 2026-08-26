@@ -71,6 +71,45 @@ The server will start on `http://localhost:3001`
 - `POST /api/controllers/:id/test` - Test controller connectivity (not yet implemented)
 - `DELETE /api/controllers/:id` - Deregister a controller
 
+### Effect Distribution
+
+- `POST /api/distribution/frames` - Send timestamped frames to one or more controllers
+
+Request body:
+
+```json
+{
+  "controllerIds": ["controller-id"],
+  "frames": [
+    { "timestamp": 1700000000000, "pixels": [[255, 0, 0], [0, 0, 0]] }
+  ]
+}
+```
+
+The endpoint returns `202` when all targets accept the batch, `207` for a
+partial delivery, and `503` when every target fails. Device protocol details
+remain inside the controller gateway.
+
+### Effect Library
+
+- `GET /api/effects` - List stored effect definitions
+- `POST /api/effects` - Create an effect definition
+- `GET /api/effects/:id` - Get an effect definition
+- `PATCH /api/effects/:id` - Update an effect definition
+- `DELETE /api/effects/:id` - Delete an effect definition
+
+Effect definitions are stored in SQLite at `EFFECT_DATABASE_PATH`. The first
+startup seeds `solid`, `gradient`, and `wave` definitions. Parameters contain
+renderer metadata and are intentionally separate from frame rendering.
+
+### Realtime WebSocket
+
+Connect a browser client to `ws://localhost:3001/api/realtime`. The server
+sends `realtime.connected` immediately. Clients can send `ping`, subscribe or
+unsubscribe messages with a `topics` array, and `effect.frames` commands using
+the same `controllerIds` and `frames` fields as the REST endpoint. Distribution
+events are published to clients subscribed to the `distribution` topic.
+
 Successful responses contain JSON resources. Validation failures return `400`
 with a `details` object, missing resources return `404`, and every API response
 contains an `X-Request-Id` header for correlation.
