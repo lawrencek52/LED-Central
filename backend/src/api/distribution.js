@@ -35,13 +35,25 @@ function isValidFrame(frame) {
   );
 }
 
-export function createDistributionRouter({ distributionService }) {
+export function createDistributionRouter({ distributionService, canvasService }) {
   const router = Router();
 
   router.post('/frames', async (req, res, next) => {
     try {
       const payload = validateDistributionPayload(req.body);
       const result = await distributionService.distribute(payload);
+      return res.status(result.status === 'partial' ? 207 : 202).json(result);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.post('/canvases/:id/frames', async (req, res, next) => {
+    try {
+      const canvas = canvasService?.get(req.params.id);
+      if (!canvas) throw new EffectDistributionError('Canvas not found', 404);
+      if (!req.body?.frame) throw new EffectDistributionError('Canvas frame request requires a frame', 400);
+      const result = await distributionService.distributeCanvasFrame({ canvas, frame: req.body.frame });
       return res.status(result.status === 'partial' ? 207 : 202).json(result);
     } catch (error) {
       return next(error);

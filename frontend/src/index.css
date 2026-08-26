@@ -1,4 +1,16 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
-:root { font-family: 'Space Grotesk', sans-serif; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
-body { margin: 0; min-width: 320px; }
+:root {
+  font-family: 'DM Mono', 'SFMono-Regular', Consolas, monospace;
+  color: #eff8ff;
+  background: #030712;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}

@@ -1,3 +1,5 @@
+import { mapCanvasFrame } from '../domain/canvases/canvas.js';
+
 export class EffectDistributionError extends Error {
   constructor(message, statusCode = 400, details = undefined) {
     super(message);
@@ -69,5 +71,27 @@ export class EffectDistributionService {
     });
 
     return distribution;
+  }
+
+  async distributeCanvasFrame({ canvas, frame }) {
+    const mapped = mapCanvasFrame(canvas, frame);
+    const controllerIds = [...mapped.keys()];
+    const results = await Promise.allSettled(controllerIds.map(async controllerId => {
+      const controller = this.controllerService.get(controllerId);
+      if (!controller) {
+        throw new EffectDistributionError(`Controller ${controllerId} was not found`, 404);
+      }
+      await this.gateway.sendFrames(controller, mapped.get(controllerId));
+      return { controllerId, status: 'sent', frameCount: mapped.get(controllerId).length };
+    }));
+    const sent = results.filter(result => result.status === 'fulfilled').map(result => result.value);
+    const failed = results.reduce((items, result, index) => {
+      if (result.status === 'rejected') items.push({ controllerId: controllerIds[index], error: result.reason.message });
+      return items;
+    }, []);
+    if (sent.length === 0 && failed.length > 0) {
+      throw new EffectDistributionError('No controllers accepted the canvas frame', 503, { sent, failed });
+    }
+    return { status: failed.length > 0 ? 'partial' : 'sent', frameCount: 1, sent, failed };
   }
 }

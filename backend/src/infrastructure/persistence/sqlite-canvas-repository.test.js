@@ -10,14 +10,24 @@ test('persists canvas mappings and revisions', () => {
   const repository = new SqliteCanvasRepository({ databasePath: path.join(directory, 'led-central.db') });
   const canvas = {
     id: 'front', name: 'Front of house', width: 20, height: 4,
-    mappings: [{ controllerId: 'deck-one', stripIndex: 0, reversed: true }],
+    mappings: [{ controllerId: 'deck-one', stripIndex: 0, reversed: true, layout: 'series', x: 0, y: 0, width: 20, height: 1, rotation: 0 }],
     revision: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z'
   };
 
   repository.save(canvas);
   assert.deepEqual(repository.get(canvas.id), {
     ...canvas,
-    mappings: [{ controllerId: 'deck-one', stripIndex: 0, rotation: 0, reversed: true }]
+    mappings: [{
+      controllerId: 'deck-one',
+      stripIndex: 0,
+      reversed: true,
+      layout: 'series',
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 1,
+      rotation: 0
+    }]
   });
   repository.close();
   fs.rmSync(directory, { recursive: true, force: true });

@@ -12,7 +12,7 @@ function validateCanvasPayload(body, { partial = false } = {}) {
     }
     if (field === 'name' && (typeof payload.name !== 'string' || !payload.name.trim())) errors.name = 'must be a non-empty string';
     if ((field === 'width' || field === 'height') && (!Number.isInteger(payload[field]) || payload[field] < 1 || payload[field] > 10000)) errors[field] = 'must be an integer between 1 and 10000';
-    if (field === 'mappings' && (!Array.isArray(payload.mappings) || payload.mappings.some(mapping => !mapping || typeof mapping !== 'object' || typeof mapping.controllerId !== 'string' || !Number.isInteger(mapping.stripIndex) || mapping.stripIndex < 0))) errors.mappings = 'must contain valid strip mappings';
+    if (field === 'mappings' && (!Array.isArray(payload.mappings) || payload.mappings.some(mapping => !mapping || typeof mapping !== 'object' || typeof mapping.controllerId !== 'string' || !Number.isInteger(mapping.stripIndex) || mapping.stripIndex < 0 || !['series', 'parallel', 'serpentine'].includes(mapping.layout || 'series')))) errors.mappings = 'must contain valid strip mappings';
   }
   if (partial && !fields.some(field => payload[field] !== undefined)) errors.body = 'must include at least one canvas field';
   if (Object.keys(errors).length > 0) {

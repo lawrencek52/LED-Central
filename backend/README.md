@@ -112,7 +112,19 @@ renderer metadata and are intentionally separate from frame rendering.
 Controllers and canvases are stored in the same SQLite database. Canvases use
 one-based revisions; send `If-Match-Revision` with `PUT` or `PATCH` to reject
 updates based on stale configuration. Canvas mappings contain a `controllerId`
-and zero-based `stripIndex`, with optional `rotation` and `reversed` fields.
+and zero-based `stripIndex`, with optional `layout` (`series`, `parallel`, or
+`serpentine`), position, size, rotation, and reversal fields. Canvas frames
+are mapped into physical strip order before distribution.
+
+### Playback
+
+- `GET /api/playback` - List playback sessions
+- `POST /api/playback/start` - Render one effect frame for a canvas and distribute it
+- `POST /api/playback/:id/stop` - Stop a playback session
+
+Start playback with `canvasId`, `effectId`, and optional renderer parameters.
+The first implementation renders one timestamped frame; continuous scheduling
+will be added after the end-to-end path is established.
 
 ### Realtime WebSocket
 
