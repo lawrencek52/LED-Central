@@ -42,8 +42,10 @@ handle more than 4 strips, up to a maximum of 100 strips.
 Groups of LED strips can be arranged to build a much larger canvas. LED-Control will need
 a method (HTTP page) to configure the canvas. A canvas can be multiple LED strips in series
 around the house, strips in parallel to create a wider canvas, or a combination of serial and
-parallel LED strips). The effects will need to be drawn across an entire canvas rather
-than just a single LED strip.
+parallel LED strips. A canvas can also be an XY array of LEDs in series, the individual LEDs are
+wired in a serpentine pattern where the data order is left to right across one row, then down
+to the next row and across right to left and so on for all rows. The effects will need to be
+drawn across an entire canvas rather than just a single LED strip.
 
 The LED-Central server should be able to create any of the effects currently in both NDSCPP
 and NightDriverStrip. In addition to these effects there are many effects in the program WLED
