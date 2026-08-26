@@ -33,4 +33,15 @@ export const apiClient = {
   connectController: (id) => request(`/controllers/${id}/connect`, { method: 'POST' }),
   disconnectController: (id) => request(`/controllers/${id}/disconnect`, { method: 'POST' }),
   deleteController: (id) => request(`/controllers/${id}`, { method: 'DELETE' }),
+  listCanvases: () => request('/canvases'),
+  createCanvas: (canvas) => request('/canvases', {
+    method: 'POST',
+    body: JSON.stringify(canvas),
+  }),
+  updateCanvas: (id, canvas, revision) => request(`/canvases/${id}`, {
+    method: 'PUT',
+    headers: revision ? { 'If-Match-Revision': String(revision) } : {},
+    body: JSON.stringify(canvas),
+  }),
+  deleteCanvas: (id) => request(`/canvases/${id}`, { method: 'DELETE' }),
 }

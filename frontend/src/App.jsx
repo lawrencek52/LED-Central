@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiClient } from './api/client'
 import { createRealtimeClient } from './api/realtime'
+import CanvasBuilder from './CanvasBuilder'
 import './App.css'
 
 const emptyForm = { name: '', host: '', port: '49152', strips: '4', ledCounts: ['215', '215', '215', '215'] }
@@ -16,15 +17,19 @@ function App() {
   const [error, setError] = useState('')
   const [realtimeStatus, setRealtimeStatus] = useState('connecting')
   const [lastEvent, setLastEvent] = useState('')
+  const [canvases, setCanvases] = useState([])
+  const [activeTab, setActiveTab] = useState('controllers')
 
   async function loadDashboard() {
     try {
-      const [healthResponse, controllerResponse] = await Promise.all([
+      const [healthResponse, controllerResponse, canvasResponse] = await Promise.all([
         apiClient.getHealth(),
         apiClient.listControllers(),
+        apiClient.listCanvases(),
       ])
       setHealth(healthResponse)
       setControllers(controllerResponse)
+      setCanvases(canvasResponse)
     } catch (requestError) {
       setError(requestError.message)
     } finally {
@@ -131,15 +136,17 @@ function App() {
         <p className="last-check">Last check<br /><strong>{health ? new Date(health.timestamp).toLocaleTimeString() : 'Waiting...'}</strong>{lastEvent && <><br />Event: <strong>{lastEvent}</strong></>}</p>
       </section>
 
+      <nav className="dashboard-tabs" aria-label="Dashboard sections"><button className={activeTab === 'controllers' ? 'active' : ''} type="button" onClick={() => setActiveTab('controllers')}>Controllers</button><button className={activeTab === 'canvases' ? 'active' : ''} type="button" onClick={() => setActiveTab('canvases')}>Canvas definition <span>{canvases.length}</span></button></nav>
+
       {error && <div className="alert" role="alert">{error}</div>}
 
-      <section className="metrics" aria-label="Controller summary">
+      {activeTab === 'controllers' && <section className="metrics" aria-label="Controller summary">
         <div className="metric-panel metric-primary"><span>Registered</span><strong>{controllers.length}</strong><small>controllers</small></div>
         <div className="metric-panel"><span>Online</span><strong>{onlineCount}</strong><small>active connections</small></div>
         <div className="metric-panel"><span>Outputs</span><strong>{outputCount}</strong><small>LED strips mapped</small></div>
-      </section>
+      </section>}
 
-      <div className="content-grid">
+      {activeTab === 'controllers' && <div className="content-grid">
         <section className="panel controller-panel">
           <div className="panel-header">
             <div><p className="eyebrow">Network inventory</p><h2>Controllers</h2></div>
@@ -173,7 +180,8 @@ function App() {
           </form>
           <p className="form-note">NightDriverStrip devices typically listen on TCP port 49152.</p>
         </section>
-      </div>
+      </div>}
+      {activeTab === 'canvases' && <CanvasBuilder controllers={controllers} canvases={canvases} onCanvasesChange={setCanvases} onError={setError} />}
     </main>
   )
 }

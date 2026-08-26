@@ -1,0 +1,121 @@
+import { useEffect, useState } from 'react'
+import { apiClient } from './api/client'
+
+const blankCanvas = {
+  name: 'New canvas',
+  width: 215,
+  height: 1,
+  mode: 'series',
+  mappings: [],
+}
+
+function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
+  const [selectedId, setSelectedId] = useState('new')
+  const [draft, setDraft] = useState(blankCanvas)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (selectedId === 'new') return
+    const canvas = canvases.find((item) => item.id === selectedId)
+    if (canvas) setDraft({ ...canvas, mode: canvas.mappings.some((mapping) => mapping.y > 0) ? 'parallel' : 'series' })
+  }, [canvases, selectedId])
+
+  function selectCanvas(id) {
+    setSelectedId(id)
+    if (id === 'new') setDraft(blankCanvas)
+  }
+
+  function addStrip() {
+    const controller = controllers[0]
+    if (!controller) return
+    const stripIndex = draft.mappings.filter((mapping) => mapping.controllerId === controller.id).length
+    const ledCount = controller.ledCounts?.[stripIndex] || 215
+    const mapping = {
+      controllerId: controller.id,
+      stripIndex,
+      layout: draft.mode,
+      x: draft.mode === 'parallel' ? 0 : draft.mappings.reduce((total, item) => total + item.width, 0),
+      y: draft.mode === 'parallel' ? draft.mappings.length : 0,
+      width: ledCount,
+      height: 1,
+      reversed: false,
+    }
+    setDraft({ ...draft, mappings: [...draft.mappings, mapping], width: draft.mode === 'series' ? mapping.x + ledCount : Math.max(draft.width, ledCount), height: draft.mode === 'parallel' ? mapping.y + 1 : 1 })
+  }
+
+  function updateMapping(index, changes) {
+    const mappings = draft.mappings.map((mapping, mappingIndex) => mappingIndex === index ? { ...mapping, ...changes } : mapping)
+    setDraft({ ...draft, mappings })
+  }
+
+  async function saveCanvas(event) {
+    event.preventDefault()
+    if (draft.mappings.length === 0) {
+      onError('Add at least one strip to the canvas before saving.')
+      return
+    }
+    setSaving(true)
+    onError('')
+    try {
+      const payload = { name: draft.name, width: Number(draft.width), height: Number(draft.height), mappings: draft.mappings }
+      const saved = selectedId === 'new' ? await apiClient.createCanvas(payload) : await apiClient.updateCanvas(selectedId, payload, draft.revision)
+      onCanvasesChange(selectedId === 'new' ? [...canvases, saved] : canvases.map((canvas) => canvas.id === saved.id ? saved : canvas))
+      setSelectedId(saved.id)
+      setDraft({ ...saved, mode: draft.mode })
+    } catch (requestError) {
+      onError(requestError.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteCanvas() {
+    if (selectedId === 'new') return
+    try {
+      await apiClient.deleteCanvas(selectedId)
+      onCanvasesChange(canvases.filter((canvas) => canvas.id !== selectedId))
+      selectCanvas('new')
+    } catch (requestError) {
+      onError(requestError.message)
+    }
+  }
+
+  const maxWidth = Math.max(draft.width, ...draft.mappings.map((mapping) => mapping.x + mapping.width), 1)
+
+  return (
+    <section className="canvas-workspace">
+      <div className="canvas-toolbar">
+        <label>Canvas<select value={selectedId} onChange={(event) => selectCanvas(event.target.value)}><option value="new">+ New canvas</option>{canvases.map((canvas) => <option key={canvas.id} value={canvas.id}>{canvas.name}</option>)}</select></label>
+        <label>Layout<select value={draft.mode} onChange={(event) => setDraft({ ...draft, mode: event.target.value })}><option value="series">Series / one row</option><option value="parallel">Parallel / rows</option></select></label>
+        {selectedId !== 'new' && <button className="secondary-button" type="button" onClick={deleteCanvas}>Delete canvas</button>}
+      </div>
+      <form className="canvas-editor" onSubmit={saveCanvas}>
+        <div className="canvas-settings">
+          <label>Canvas name<input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
+          <label>Width<input type="number" min="1" max="10000" value={draft.width} onChange={(event) => setDraft({ ...draft, width: Number(event.target.value) })} /></label>
+          <label>Height<input type="number" min="1" max="10000" value={draft.height} onChange={(event) => setDraft({ ...draft, height: Number(event.target.value) })} /></label>
+          <button className="secondary-button" type="button" onClick={addStrip} disabled={controllers.length === 0}>Add strip</button>
+        </div>
+        <div className="canvas-preview-panel">
+          <div className="preview-heading"><div><p className="eyebrow">Canvas preview</p><h3>{draft.mode === 'series' ? 'Continuous strip run' : 'Offset parallel rows'}</h3></div><span>{draft.mappings.length} strips / {maxWidth} LEDs wide</span></div>
+          <div className={`canvas-preview ${draft.mode}`} style={{ '--canvas-width': maxWidth }}>
+            {draft.mappings.map((mapping, index) => {
+              const controller = controllers.find((item) => item.id === mapping.controllerId)
+              return <div className="canvas-strip" key={`${mapping.controllerId}-${mapping.stripIndex}-${index}`} style={{ '--strip-start': `${(mapping.x / maxWidth) * 100}%`, '--strip-size': `${(mapping.width / maxWidth) * 100}%`, '--strip-row': mapping.y + 1 }}><span>{controller?.name || mapping.controllerId} / strip {mapping.stripIndex + 1}</span><b>{mapping.width} LEDs</b></div>
+            })}
+            {draft.mappings.length === 0 && <div className="canvas-empty">Add strips to see the canvas layout.</div>}
+          </div>
+        </div>
+        <div className="strip-mapping-list">
+          {draft.mappings.map((mapping, index) => {
+            const controller = controllers.find((item) => item.id === mapping.controllerId)
+            return <div className="strip-mapping" key={`${mapping.controllerId}-${mapping.stripIndex}-${index}`}><strong>Strip {index + 1}</strong><select value={mapping.controllerId} onChange={(event) => updateMapping(index, { controllerId: event.target.value })}>{controllers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select value={mapping.stripIndex} onChange={(event) => updateMapping(index, { stripIndex: Number(event.target.value), width: controller?.ledCounts?.[Number(event.target.value)] || 215 })}>{Array.from({ length: controller?.strips || 0 }, (_, stripIndex) => <option key={stripIndex} value={stripIndex}>Strip {stripIndex + 1}</option>)}</select><label>LEDs<input type="number" min="1" max="4200" value={mapping.width} onChange={(event) => updateMapping(index, { width: Number(event.target.value) })} /></label>{draft.mode === 'parallel' && <label>Offset<input type="number" min="0" max="10000" value={mapping.x} onChange={(event) => updateMapping(index, { x: Number(event.target.value) })} /></label>}<label>Direction<select value={mapping.reversed ? 'rtl' : 'ltr'} onChange={(event) => updateMapping(index, { reversed: event.target.value === 'rtl' })}><option value="ltr">Left to right</option><option value="rtl">Right to left</option></select></label><button className="icon-action danger" type="button" onClick={() => setDraft({ ...draft, mappings: draft.mappings.filter((_, mappingIndex) => mappingIndex !== index) })}>Remove</button></div>
+          })}
+        </div>
+        <button className="primary-button" type="submit" disabled={saving}>{saving ? 'Saving canvas...' : selectedId === 'new' ? 'Create canvas' : 'Save canvas'}</button>
+      </form>
+    </section>
+  )
+}
+
+export default CanvasBuilder
