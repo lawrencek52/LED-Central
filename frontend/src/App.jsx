@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { apiClient } from './api/client'
+import { createRealtimeClient } from './api/realtime'
 import './App.css'
 
 const emptyForm = { name: '', host: '', port: '49152' }
@@ -11,6 +12,8 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [realtimeStatus, setRealtimeStatus] = useState('connecting')
+  const [lastEvent, setLastEvent] = useState('')
 
   async function loadDashboard() {
     try {
@@ -29,6 +32,15 @@ function App() {
 
   useEffect(() => {
     loadDashboard()
+    return createRealtimeClient({
+      onStatus: setRealtimeStatus,
+      onEvent: (event) => {
+        setLastEvent(event.type || '')
+        if (event.type === 'controller.updated' || event.type === 'distribution.completed') loadDashboard()
+      },
+      url: import.meta.env.VITE_WS_URL,
+      token: import.meta.env.VITE_WS_TOKEN,
+    })
   }, [])
 
   async function handleSubmit(event) {
@@ -67,8 +79,8 @@ function App() {
           <span>LED-Central</span>
         </a>
         <div className="topbar-status">
-          <span className={`status-dot ${health ? 'is-ready' : ''}`} aria-hidden="true" />
-          <span>{health ? 'System online' : 'System unavailable'}</span>
+          <span className={`status-dot ${realtimeStatus === 'connected' ? 'is-ready' : ''}`} aria-hidden="true" />
+          <span>{realtimeStatus === 'connected' ? 'Realtime connected' : `Realtime ${realtimeStatus}`}</span>
           <button className="refresh-button" type="button" onClick={() => { setLoading(true); setError(''); loadDashboard() }} disabled={loading}>Refresh</button>
         </div>
       </header>
@@ -79,7 +91,7 @@ function App() {
           <h1>Controller dashboard</h1>
           <p className="heading-copy">Monitor the network and keep every light surface within reach.</p>
         </div>
-        <p className="last-check">Last check<br /><strong>{health ? new Date(health.timestamp).toLocaleTimeString() : 'Waiting...'}</strong></p>
+        <p className="last-check">Last check<br /><strong>{health ? new Date(health.timestamp).toLocaleTimeString() : 'Waiting...'}</strong>{lastEvent && <><br />Event: <strong>{lastEvent}</strong></>}</p>
       </section>
 
       {error && <div className="alert" role="alert">{error}</div>}

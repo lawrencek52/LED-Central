@@ -36,6 +36,8 @@ NODE_ENV=development
 HOST=127.0.0.1
 PORT=3001
 API_TIMEOUT=30000
+EFFECT_DATABASE_PATH=./data/led-central.db
+AUTH_TOKEN=
 LOG_LEVEL=info
 CORS_ORIGIN=http://localhost:5173
 ```
@@ -55,6 +57,37 @@ npm start
 ```
 
 The server will start on `http://localhost:3001`
+
+## Authentication
+
+Authentication is optional and is controlled by `AUTH_TOKEN`:
+
+- When `AUTH_TOKEN` is empty, the local development API and realtime WebSocket
+  accept unauthenticated clients.
+- When `AUTH_TOKEN` is set, every HTTP endpoint under `/api` requires an exact
+  bearer token. Requests without the correct header receive `401`.
+- The health endpoint is also protected when authentication is enabled.
+
+HTTP clients send the token in an authorization header:
+
+```bash
+curl http://localhost:3001/api/controllers \
+  -H "Authorization: Bearer ${AUTH_TOKEN}"
+```
+
+Browser WebSocket clients cannot set custom authorization headers through the
+standard browser API, so the realtime client sends the token during the
+handshake as `ws://localhost:3001/api/realtime?token=...`. The server rejects
+the upgrade with `401` when the token is missing or incorrect. The frontend
+reads `VITE_API_TOKEN` for HTTP requests and `VITE_WS_TOKEN` for WebSocket
+connections.
+
+Use a long random token, keep `.env` files out of version control, and avoid
+putting authenticated WebSocket URLs in logs or shared screenshots because the
+query string contains the credential. Authentication is token-based rather
+than user-based: there are no accounts, roles, refresh tokens, or expiration
+handling yet. Deployments outside a trusted LAN should also use TLS and a
+stronger identity layer before exposing the service.
 
 ## API Endpoints
 
@@ -133,6 +166,13 @@ sends `realtime.connected` immediately. Clients can send `ping`, subscribe or
 unsubscribe messages with a `topics` array, and `effect.frames` commands using
 the same `controllerIds` and `frames` fields as the REST endpoint. Distribution
 events are published to clients subscribed to the `distribution` topic.
+
+The frontend reconnects with bounded exponential backoff. Authentication is
+described in the Authentication section above.
+
+### Metrics
+
+- `GET /api/metrics` - Request count, response count, error count, uptime, and average response time
 
 Successful responses contain JSON resources. Validation failures return `400`
 with a `details` object, missing resources return `404`, and every API response

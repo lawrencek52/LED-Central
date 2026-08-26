@@ -8,6 +8,7 @@ const DEFAULTS = {
   port: 3001,
   apiTimeoutMs: 30000,
   effectDatabasePath: './data/led-central.db',
+  authToken: '',
   logLevel: 'info',
   corsOrigins: ['http://localhost:5173']
 };
@@ -60,6 +61,7 @@ export function loadConfig(environment = process.env) {
       { min: 100, max: 300000 }
     ),
     effectDatabasePath: environment.EFFECT_DATABASE_PATH?.trim() || DEFAULTS.effectDatabasePath,
+    authToken: environment.AUTH_TOKEN?.trim() || DEFAULTS.authToken,
     logLevel,
     corsOrigins: origins(environment.CORS_ORIGIN ?? DEFAULTS.corsOrigins.join(','))
   });

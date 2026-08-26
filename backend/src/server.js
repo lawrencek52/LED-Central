@@ -21,6 +21,9 @@ import { createCanvasRouter } from './api/canvases.js';
 import { CanvasService } from './application/canvas-service.js';
 import { SqliteControllerRepository } from './infrastructure/persistence/sqlite-controller-repository.js';
 import { SqliteCanvasRepository } from './infrastructure/persistence/sqlite-canvas-repository.js';
+import { Metrics } from './infrastructure/metrics/metrics.js';
+import { createMetricsRouter } from './api/metrics.js';
+import { createAuthMiddleware } from './middleware/auth.js';
 
 export function createApp({
   controllerService = new ControllerService({
@@ -31,6 +34,7 @@ export function createApp({
   }),
   playbackService,
   eventHub = new EventHub(),
+  metrics = new Metrics(),
   effectService = new EffectLibraryService({
     repository: new SqliteEffectRepository({
       databasePath: config.effectDatabasePath,
@@ -55,6 +59,7 @@ export function createApp({
     distributionService,
     eventHub
   });
+  app.locals.metrics = metrics;
 
   app.use(cors({ origin: config.corsOrigins }));
   app.use(express.json());
@@ -63,10 +68,18 @@ export function createApp({
     res.setHeader('X-Request-Id', req.requestId);
     next();
   });
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+    metrics.recordRequest();
+    res.on('finish', () => metrics.recordResponse({ durationMs: Date.now() - startedAt, statusCode: res.statusCode }));
+    next();
+  });
+  app.use('/api', createAuthMiddleware({ token: config.authToken }));
 
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
+  app.use('/api/metrics', createMetricsRouter({ metrics }));
 
   app.use('/api/controllers', createControllerRouter({ controllerService }));
   app.use('/api/distribution', createDistributionRouter({ distributionService, canvasService }));
@@ -111,7 +124,8 @@ export function startServer() {
   attachRealtimeServer({
     server,
     eventHub: app.locals.eventHub,
-    distributionService: app.locals.distributionService
+    distributionService: app.locals.distributionService,
+    authToken: config.authToken
   });
   server.listen(config.port, config.host, () => {
     console.log(

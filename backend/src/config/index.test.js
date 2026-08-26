@@ -9,6 +9,7 @@ test('loads defaults for an empty environment', () => {
     port: 3001,
     apiTimeoutMs: 30000,
     effectDatabasePath: './data/led-central.db',
+    authToken: '',
     logLevel: 'info',
     corsOrigins: ['http://localhost:5173']
   });
@@ -30,6 +31,7 @@ test('parses and normalizes configured values', () => {
       port: 8080,
       apiTimeoutMs: 5000,
       effectDatabasePath: './data/led-central.db',
+      authToken: '',
       logLevel: 'warn',
       corsOrigins: ['https://led.example', 'https://admin.example']
     }

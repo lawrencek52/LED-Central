@@ -81,7 +81,9 @@ frontend/
 
 ```
 VITE_API_URL=http://localhost:3001/api
-VITE_WS_URL=ws://localhost:49152
+VITE_WS_URL=ws://localhost:3001/api/realtime
+VITE_API_TOKEN=
+VITE_WS_TOKEN=
 ```
 
 ## API Integration

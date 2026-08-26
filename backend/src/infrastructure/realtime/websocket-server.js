@@ -6,7 +6,8 @@ export function attachRealtimeServer({
   server,
   eventHub,
   distributionService,
-  path = '/api/realtime'
+  path = '/api/realtime',
+  authToken = ''
 }) {
   const websocketServer = new WebSocketServer({ noServer: true });
   const clients = new Map();
@@ -14,6 +15,11 @@ export function attachRealtimeServer({
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url, 'http://localhost');
     if (url.pathname !== path) {
+      socket.destroy();
+      return;
+    }
+    if (authToken && url.searchParams.get('token') !== authToken) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }

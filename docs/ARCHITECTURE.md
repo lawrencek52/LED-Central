@@ -185,6 +185,24 @@ configured.
 - Expose health separately from readiness: health means the process is alive;
   readiness includes required persistence and gateway initialization.
 
+### Authentication Flow
+
+Authentication is an optional shared bearer-token boundary around the backend:
+
+1. Set `AUTH_TOKEN` in the backend environment.
+2. HTTP clients send `Authorization: Bearer <token>` to every `/api` route.
+3. The browser sends the same token as the `token` query parameter when opening
+  `/api/realtime`, because browser WebSockets cannot set custom headers.
+4. Invalid HTTP credentials receive `401`; invalid WebSocket upgrades are
+  rejected before a connection is created.
+
+The frontend reads `VITE_API_TOKEN` and `VITE_WS_TOKEN` for these two channels.
+With an empty `AUTH_TOKEN`, authentication is disabled for local development.
+This is a shared token, not user authentication: there are currently no users,
+roles, token expiry, refresh flow, or audit identity. Query-string WebSocket
+tokens can appear in proxy or access logs, so production deployments should
+prefer TLS, restricted log access, and a future short-lived handshake token.
+
 ## Delivery Order
 
 1. Extract configuration, validation, error handling, and controller repository.
@@ -201,3 +219,16 @@ configured.
 The first meaningful milestone is one effect rendered onto one canvas and sent
 to multiple configured controllers, with a fake gateway proving the mapping
 and queue behavior in automated tests.
+
+## Real-World Validation
+
+The wave-effect test passed both validation levels: all 23 backend tests passed
+from the test-harness perspective, and a physical eyeball check confirmed that
+the strips on `deck1.local` were correctly playing the wave effect. The live
+test ran for two minutes across all four strips, with 215 LEDs per strip.
+
+The browser realtime channel now connects to `/api/realtime`, subscribes to
+controller, playback, and distribution topics, and reconnects with bounded
+exponential backoff. The backend exposes `/api/metrics` and supports optional
+bearer-token authentication through `AUTH_TOKEN`; the same token protects the
+browser WebSocket handshake.

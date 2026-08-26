@@ -175,6 +175,10 @@ Backend configuration is loaded from `backend/.env`. Copy
 The supported settings are `NODE_ENV`, `HOST`, `PORT`, `API_TIMEOUT`,
 `LOG_LEVEL`, and comma-separated `CORS_ORIGIN`.
 
+Set `AUTH_TOKEN` to require bearer authentication for the HTTP API and browser
+realtime WebSocket. See [backend/README.md](backend/README.md#authentication)
+for request examples and the frontend token settings.
+
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system boundaries,
