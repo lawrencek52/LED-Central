@@ -58,7 +58,7 @@ function validateControllerPayload(body, { partial = false } = {}) {
   };
 }
 
-export function createControllerRouter({ controllerService }) {
+export function createControllerRouter({ controllerService, gateway }) {
   const router = Router();
 
   router.get('/', (req, res) => {
@@ -102,6 +102,26 @@ export function createControllerRouter({ controllerService }) {
       error: 'Controller connectivity test is not implemented',
       controllerId: controller.id
     });
+  });
+
+  router.post('/:id/connect', async (req, res, next) => {
+    const controller = controllerService.get(req.params.id);
+    if (!controller) return next(Object.assign(new Error('Controller not found'), { statusCode: 404 }));
+    try {
+      await gateway.connect(controller);
+      return res.json(controllerService.setConnectionState(controller.id, true));
+    } catch (error) {
+      controllerService.setConnectionState(controller.id, false);
+      error.statusCode = 503;
+      return next(error);
+    }
+  });
+
+  router.post('/:id/disconnect', (req, res, next) => {
+    const controller = controllerService.get(req.params.id);
+    if (!controller) return next(Object.assign(new Error('Controller not found'), { statusCode: 404 }));
+    gateway.disconnect(controller.id);
+    return res.json(controllerService.setConnectionState(controller.id, false));
   });
 
   router.delete('/:id', (req, res, next) => {

@@ -48,6 +48,16 @@ export class ControllerService {
     return this.repository.save(updated);
   }
 
+  setConnectionState(id, connected) {
+    const controller = this.get(id);
+    if (!controller) return null;
+    return this.repository.save({
+      ...controller,
+      connected,
+      lastSeen: connected ? this.now().toISOString() : controller.lastSeen
+    });
+  }
+
   remove(id) {
     return this.repository.remove(id);
   }

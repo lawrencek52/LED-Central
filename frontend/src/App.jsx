@@ -12,6 +12,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState(null)
+  const [connectingId, setConnectingId] = useState(null)
   const [error, setError] = useState('')
   const [realtimeStatus, setRealtimeStatus] = useState('connecting')
   const [lastEvent, setLastEvent] = useState('')
@@ -89,6 +90,21 @@ function App() {
     }
   }
 
+  async function handleConnection(controller) {
+    setConnectingId(controller.id)
+    setError('')
+    try {
+      const updated = controller.connected
+        ? await apiClient.disconnectController(controller.id)
+        : await apiClient.connectController(controller.id)
+      setControllers((current) => current.map((item) => item.id === updated.id ? updated : item))
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setConnectingId(null)
+    }
+  }
+
   const onlineCount = controllers.filter((controller) => controller.connected).length
   const outputCount = controllers.reduce((total, controller) => total + (controller.strips || 0), 0)
 
@@ -138,7 +154,7 @@ function App() {
                   <div className="controller-icon" aria-hidden="true">{controller.name.slice(0, 1).toUpperCase()}</div>
                   <div className="controller-details"><h3>{controller.name}</h3><p>{controller.host}:{controller.port}</p></div>
                   <div className="controller-meta"><span className={`connection-state ${controller.connected ? 'online' : ''}`}><i />{controller.connected ? 'Online' : 'Offline'}</span><span>{controller.strips || 0} strips</span><span>{(controller.ledCounts || []).join(' / ') || '215'} LEDs</span></div>
-                  <div className="row-actions"><button className="icon-action" type="button" onClick={() => editController(controller)}>Edit</button><button className="icon-action danger" type="button" onClick={() => handleDelete(controller.id)} aria-label={`Remove ${controller.name}`} title="Remove controller">Remove</button></div>
+                  <div className="row-actions"><button className="icon-action connect" type="button" onClick={() => handleConnection(controller)} disabled={connectingId === controller.id}>{connectingId === controller.id ? 'Working...' : controller.connected ? 'Disconnect' : 'Connect'}</button><button className="icon-action" type="button" onClick={() => editController(controller)}>Edit</button><button className="icon-action danger" type="button" onClick={() => handleDelete(controller.id)} aria-label={`Remove ${controller.name}`} title="Remove controller">Remove</button></div>
                 </article>
               ))}
             </div>

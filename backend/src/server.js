@@ -35,6 +35,7 @@ export function createApp({
   playbackService,
   eventHub = new EventHub(),
   metrics = new Metrics(),
+  gateway = new TcpControllerGateway(),
   effectService = new EffectLibraryService({
     repository: new SqliteEffectRepository({
       databasePath: config.effectDatabasePath,
@@ -43,7 +44,7 @@ export function createApp({
   }),
   distributionService = new EffectDistributionService({
     controllerService,
-    gateway: new TcpControllerGateway(),
+    gateway,
     eventHub
   })
 } = {}) {
@@ -81,7 +82,7 @@ export function createApp({
   });
   app.use('/api/metrics', createMetricsRouter({ metrics }));
 
-  app.use('/api/controllers', createControllerRouter({ controllerService }));
+  app.use('/api/controllers', createControllerRouter({ controllerService, gateway }));
   app.use('/api/distribution', createDistributionRouter({ distributionService, canvasService }));
   app.use('/api/effects', createEffectRouter({ effectService }));
   app.use('/api/canvases', createCanvasRouter({ canvasService }));

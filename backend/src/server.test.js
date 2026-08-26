@@ -64,3 +64,29 @@ test('serves controller CRUD and validates requests', async t => {
   });
   assert.deepEqual(deleted.body, { success: true });
 });
+
+test('connects and disconnects a controller through the gateway', async t => {
+  const controllerService = new (class {
+    constructor() { this.controller = { id: 'deck1', name: 'Deck', host: 'deck1.local', port: 49152, connected: false, strips: 4, ledCounts: [215, 215, 215, 215], lastSeen: '2026-01-01T00:00:00.000Z' }; }
+    list() { return [this.controller]; }
+    get() { return this.controller; }
+    setConnectionState(id, connected) { this.controller = { ...this.controller, id, connected }; return this.controller; }
+    remove() { return true; }
+  })();
+  const calls = [];
+  const gateway = {
+    connect: async controller => calls.push(['connect', controller.id]),
+    disconnect: id => calls.push(['disconnect', id])
+  };
+  const server = createServer(createApp({ controllerService, gateway })).listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => server.close());
+
+  const connected = await request(server, '/api/controllers/deck1/connect', { method: 'POST' });
+  assert.equal(connected.status, 200);
+  assert.equal(connected.body.connected, true);
+  const disconnected = await request(server, '/api/controllers/deck1/disconnect', { method: 'POST' });
+  assert.equal(disconnected.status, 200);
+  assert.equal(disconnected.body.connected, false);
+  assert.deepEqual(calls, [['connect', 'deck1'], ['disconnect', 'deck1']]);
+});
