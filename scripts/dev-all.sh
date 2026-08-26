@@ -4,6 +4,8 @@
 
 set -e
 
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 trap 'kill $(jobs -p) 2>/dev/null; exit 0' EXIT TERM INT
 
 # Color codes
@@ -16,13 +18,13 @@ echo ""
 
 # Start backend in background
 echo -e "${BLUE}[Backend]${NC} Starting on port 3001..."
-cd "$(dirname "$0")/backend"
+cd "$PROJECT_ROOT/backend"
 npm run dev > /tmp/led-central-backend.log 2>&1 &
 BACKEND_PID=$!
 
 # Start frontend in background
 echo -e "${BLUE}[Frontend]${NC} Starting on port 5173..."
-cd "$(dirname "$0")/frontend"
+cd "$PROJECT_ROOT/frontend"
 npm run dev > /tmp/led-central-frontend.log 2>&1 &
 FRONTEND_PID=$!
 

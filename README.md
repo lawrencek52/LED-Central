@@ -170,6 +170,16 @@ UI available at `http://localhost:5173`
 
 See [backend/README.md](backend/README.md) for detailed API endpoints.
 
+Backend configuration is loaded from `backend/.env`. Copy
+`backend/.env.example` to `backend/.env`; values are validated at startup.
+The supported settings are `NODE_ENV`, `HOST`, `PORT`, `API_TIMEOUT`,
+`LOG_LEVEL`, and comma-separated `CORS_ORIGIN`.
+
+## Architecture
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system boundaries,
+domain model, data flow, API direction, and implementation milestones.
+
 ## Component Descriptions
 
 ### Backend Server

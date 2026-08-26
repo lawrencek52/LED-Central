@@ -33,8 +33,11 @@ Configure:
 
 ```
 NODE_ENV=development
+HOST=127.0.0.1
 PORT=3001
 API_TIMEOUT=30000
+LOG_LEVEL=info
+CORS_ORIGIN=http://localhost:5173
 ```
 
 ## Running the Server
@@ -64,7 +67,13 @@ The server will start on `http://localhost:3001`
 - `GET /api/controllers` - List all connected controllers
 - `POST /api/controllers` - Register a new controller
 - `GET /api/controllers/:id` - Get controller details
+- `PATCH /api/controllers/:id` - Update controller name, host, or port
+- `POST /api/controllers/:id/test` - Test controller connectivity (not yet implemented)
 - `DELETE /api/controllers/:id` - Deregister a controller
+
+Successful responses contain JSON resources. Validation failures return `400`
+with a `details` object, missing resources return `404`, and every API response
+contains an `X-Request-Id` header for correlation.
 
 ### Controller Registration Example
 
