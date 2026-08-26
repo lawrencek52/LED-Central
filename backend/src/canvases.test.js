@@ -42,4 +42,16 @@ test('creates canvases and rejects stale revisions', async t => {
     body: JSON.stringify({ name: 'Stale', width: 20, height: 4, mappings: [] })
   });
   assert.equal(conflict.status, 409);
+
+  const invalidBounds = await request(server, '/api/canvases', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Invalid bounds',
+      width: 215,
+      height: 2,
+      mappings: [{ controllerId: 'deck-1', stripIndex: 0, x: 107, y: 1, width: 215, height: 1 }]
+    })
+  });
+  assert.equal(invalidBounds.status, 400);
+  assert.equal(invalidBounds.body.details.mappings, 'must fit within the declared canvas width and height');
 });

@@ -65,17 +65,18 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
       if (!String(draft.name || '').trim()) throw new Error('Canvas name is required.')
       if (!Number.isInteger(Number(draft.width)) || Number(draft.width) < 1) throw new Error('Canvas width must be a positive integer.')
       if (!Number.isInteger(Number(draft.height)) || Number(draft.height) < 1) throw new Error('Canvas height must be a positive integer.')
+      const mappings = draft.mappings.map((mapping) => ({
+        ...mapping,
+        x: Number(mapping.x || 0),
+        y: Number(mapping.y || 0),
+        width: Number(mapping.width),
+        height: Number(mapping.height || 1),
+      }))
       const payload = {
         name: draft.name,
-        width: Number(draft.width),
-        height: Number(draft.height),
-        mappings: draft.mappings.map((mapping) => ({
-          ...mapping,
-          x: Number(mapping.x || 0),
-          y: Number(mapping.y || 0),
-          width: Number(mapping.width),
-          height: Number(mapping.height || 1),
-        })),
+        width: Math.max(Number(draft.width), ...mappings.map((mapping) => mapping.x + mapping.width)),
+        height: Math.max(Number(draft.height), ...mappings.map((mapping) => mapping.y + mapping.height)),
+        mappings,
       }
       const saved = selectedId === 'new' ? await apiClient.createCanvas(payload) : await apiClient.updateCanvas(selectedId, payload, draft.revision)
       onCanvasesChange(selectedId === 'new' ? [...canvases, saved] : canvases.map((canvas) => canvas.id === saved.id ? saved : canvas))

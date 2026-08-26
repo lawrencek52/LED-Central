@@ -15,6 +15,14 @@ function validateCanvasPayload(body, { partial = false } = {}) {
     if (field === 'mappings' && (!Array.isArray(payload.mappings) || payload.mappings.some(mapping => !mapping || typeof mapping !== 'object' || typeof mapping.controllerId !== 'string' || !Number.isInteger(mapping.stripIndex) || mapping.stripIndex < 0 || !['series', 'parallel', 'serpentine'].includes(mapping.layout || 'series')))) errors.mappings = 'must contain valid strip mappings';
   }
   if (partial && !fields.some(field => payload[field] !== undefined)) errors.body = 'must include at least one canvas field';
+  if (Number.isInteger(payload.width) && Number.isInteger(payload.height) && Array.isArray(payload.mappings)) {
+    const outOfBounds = payload.mappings.find(mapping => (
+      Number.isInteger(mapping.x) && Number.isInteger(mapping.y) &&
+      Number.isInteger(mapping.width) && Number.isInteger(mapping.height) &&
+      (mapping.x + mapping.width > payload.width || mapping.y + mapping.height > payload.height)
+    ));
+    if (outOfBounds) errors.mappings = 'must fit within the declared canvas width and height';
+  }
   if (Object.keys(errors).length > 0) {
     const error = new Error('Invalid canvas payload');
     error.statusCode = 400;

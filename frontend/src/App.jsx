@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiClient } from './api/client'
 import { createRealtimeClient } from './api/realtime'
 import CanvasBuilder from './CanvasBuilder'
+import EffectSelector from './EffectSelector'
 import './App.css'
 
 const emptyForm = { name: '', host: '', port: '49152', strips: '4', ledCounts: ['215', '215', '215', '215'] }
@@ -19,17 +20,20 @@ function App() {
   const [lastEvent, setLastEvent] = useState('')
   const [canvases, setCanvases] = useState([])
   const [activeTab, setActiveTab] = useState('controllers')
+  const [effects, setEffects] = useState([])
 
   async function loadDashboard() {
     try {
-      const [healthResponse, controllerResponse, canvasResponse] = await Promise.all([
+      const [healthResponse, controllerResponse, canvasResponse, effectResponse] = await Promise.all([
         apiClient.getHealth(),
         apiClient.listControllers(),
         apiClient.listCanvases(),
+        apiClient.listEffects(),
       ])
       setHealth(healthResponse)
       setControllers(controllerResponse)
       setCanvases(canvasResponse)
+      setEffects(effectResponse)
     } catch (requestError) {
       setError(requestError.message)
     } finally {
@@ -136,7 +140,7 @@ function App() {
         <p className="last-check">Last check<br /><strong>{health ? new Date(health.timestamp).toLocaleTimeString() : 'Waiting...'}</strong>{lastEvent && <><br />Event: <strong>{lastEvent}</strong></>}</p>
       </section>
 
-      <nav className="dashboard-tabs" aria-label="Dashboard sections"><button className={activeTab === 'controllers' ? 'active' : ''} type="button" onClick={() => setActiveTab('controllers')}>Controllers</button><button className={activeTab === 'canvases' ? 'active' : ''} type="button" onClick={() => setActiveTab('canvases')}>Canvas definition <span>{canvases.length}</span></button></nav>
+      <nav className="dashboard-tabs" aria-label="Dashboard sections"><button className={activeTab === 'controllers' ? 'active' : ''} type="button" onClick={() => setActiveTab('controllers')}>Controllers</button><button className={activeTab === 'canvases' ? 'active' : ''} type="button" onClick={() => setActiveTab('canvases')}>Canvas definition <span>{canvases.length}</span></button><button className={activeTab === 'effects' ? 'active' : ''} type="button" onClick={() => setActiveTab('effects')}>Effect selection <span>{effects.length}</span></button></nav>
 
       {error && <div className="alert" role="alert">{error}</div>}
 
@@ -182,6 +186,7 @@ function App() {
         </section>
       </div>}
       {activeTab === 'canvases' && <CanvasBuilder controllers={controllers} canvases={canvases} onCanvasesChange={setCanvases} onError={setError} />}
+      {activeTab === 'effects' && <EffectSelector canvases={canvases} effects={effects} onError={setError} lastEvent={lastEvent} />}
     </main>
   )
 }

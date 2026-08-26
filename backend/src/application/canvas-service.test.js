@@ -56,3 +56,17 @@ test('allows a canvas to retain its own strip assignments during update', () => 
   });
   assert.equal(updated.name, 'Updated');
 });
+
+test('accepts canvas bounds that include parallel row offsets', () => {
+  const service = new CanvasService({
+    repository: repositoryWith([]),
+    idFactory: () => 'out-of-bounds'
+  });
+
+  assert.doesNotThrow(() => service.create({
+    name: 'Bounded parallel canvas',
+    width: 322,
+    height: 2,
+    mappings: [{ controllerId: 'deck1', stripIndex: 0, x: 107, y: 1, width: 215, height: 1 }]
+  }));
+});

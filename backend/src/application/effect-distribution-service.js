@@ -74,7 +74,13 @@ export class EffectDistributionService {
   }
 
   async distributeCanvasFrame({ canvas, frame }) {
-    const mapped = mapCanvasFrame(canvas, frame);
+    let mapped;
+    try {
+      mapped = mapCanvasFrame(canvas, frame);
+    } catch (error) {
+      error.statusCode = 400;
+      throw error;
+    }
     const controllerIds = [...mapped.keys()];
     const results = await Promise.allSettled(controllerIds.map(async controllerId => {
       const controller = this.controllerService.get(controllerId);

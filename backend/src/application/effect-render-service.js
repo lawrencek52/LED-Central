@@ -46,8 +46,9 @@ const renderers = {
     const color = parseColor(parameters.color);
     const speed = Number(parameters.speed) || 0;
     const waveWidth = Math.max(1, Number(parameters.width) || 1);
+    const phaseOffset = Number(parameters.timeSeconds) || 0;
     return Array.from({ length: width * height }, (_, index) => {
-      const intensity = Math.max(0, Math.min(1, (Math.sin((index % width) / waveWidth * Math.PI * 2 + speed) + 1) / 2));
+      const intensity = Math.max(0, Math.min(1, (Math.sin((index % width) / waveWidth * Math.PI * 2 + phaseOffset * speed) + 1) / 2));
       return color.map(channel => Math.round(channel * intensity));
     });
   }

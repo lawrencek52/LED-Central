@@ -45,4 +45,10 @@ export const apiClient = {
     body: JSON.stringify(canvas),
   }),
   deleteCanvas: (id) => request(`/canvases/${id}`, { method: 'DELETE' }),
+  listEffects: () => request('/effects'),
+  startPlayback: (playback) => request('/playback/start', {
+    method: 'POST',
+    body: JSON.stringify(playback),
+  }),
+  stopPlayback: (id) => request(`/playback/${id}/stop`, { method: 'POST' }),
 }

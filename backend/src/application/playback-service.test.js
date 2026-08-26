@@ -15,4 +15,5 @@ test('renders and distributes an effect frame on playback start', async () => {
   const session = await service.start({ canvasId: 'canvas-1', effectId: 'solid' });
   assert.equal(session.status, 'playing');
   assert.deepEqual(sent[0].frame.pixels, [[255, 255, 255]]);
+  service.stop(session.id);
 });
