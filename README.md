@@ -3,7 +3,7 @@ Central controller for many NightDriverStrip Controllers
 
 I have multiple NightDriverStrip controllers. Each controller can operate up to four
 independent strips of LEDs. Each controller has a few build-in effects (or patterns)
-for the strips of LEDs. The effects can be individually selected for each strip, or 
+for the strips of LEDs. The effects can be individually selected for each strip, or
 one pattern can be used for all four strips of LEDs. The code for NightDriverStrip is
 in the directory `../NightDriverStrip`
 
@@ -13,7 +13,7 @@ effects on each of the strips of LEDs. However each controller has it's own web 
 and the user must open a separate browser window to each controller to control all
 of the LEDs.
 
-The NightDriverStrip program can also receive effects on a socket at port 49152. The 
+The NightDriverStrip program can also receive effects on a socket at port 49152. The
 effects are received one frame at a time and may be uncompressed, or in a compressed
 format. Received effect frames are timestamped for when they should be displayed, and
 multiple frames may be queued. Each effect frame is transferred to the LED strips at the
@@ -55,4 +55,157 @@ both WLED and FastLED have many more settings than the simpler effects in NDSCPP
 NightDriverStrip, hence the HTTP server will need to have pages dedicated to configuring the
 more complex effects.
 
+---
+
+## Project Structure
+
+```
+LED-Central/
+├── backend/              # Node.js/Express central server
+│   ├── src/
+│   │   └── server.js
+│   ├── package.json
+│   ├── .env.example
+│   └── README.md
+├── frontend/             # React + Vite web UI
+│   ├── src/
+│   ├── public/
+│   ├── vite.config.js
+│   ├── package.json
+│   ├── .env.development
+│   └── README.md
+├── docs/                 # Project documentation
+├── .vscode/              # VS Code workspace settings
+├── scripts/              # Development helper scripts
+├── .gitignore
+├── Makefile              # Linux development commands
+├── setup-linux.sh        # Automated Linux setup
+├── QUICKSTART.md         # Quick start guide
+├── LED-Central.code-workspace  # VS Code workspace
+└── README.md            # This file
+```
+
+## Technology Stack
+
+### Backend
+- **Runtime**: Node.js
+- **Framework**: Express.js
+- **Key Features**: RESTful API, CORS, Controller management
+- **Communication**: HTTP, WebSocket
+
+### Frontend
+- **Framework**: React
+- **Build Tool**: Vite
+- **Linting**: Oxlint
+- **API Client**: Axios
+
+## Getting Started
+
+### System Requirements
+
+**This project is configured to run on Linux systems.**
+
+- Ubuntu/Debian-based Linux (recommended)
+- Linux kernel 4.4+
+- 2GB RAM minimum
+- Text editor or VS Code for development
+
+### Prerequisites
+
+- **Node.js >= 14.0**: `sudo apt install nodejs npm`
+- **VS Code** (optional): `sudo snap install --classic code`
+
+### Automated Setup (Recommended)
+
+Run the Linux setup script to automatically install all dependencies:
+
+```bash
+./setup-linux.sh
+```
+
+This script will:
+- Install Node.js if not already installed
+- Install npm dependencies for backend and frontend
+- Create `.env` configuration files
+
+### Manual Setup Instructions
+
+If you prefer manual setup:
+
+#### 1. Install Backend Dependencies
+
+```bash
+cd backend
+npm install
+```
+
+#### 2. Install Frontend Dependencies
+
+```bash
+cd frontend
+npm install
+```
+
+### Running the Project
+
+#### Terminal 1: Start Backend Server
+
+```bash
+cd backend
+npm run dev
+```
+
+Server runs on `http://localhost:3001`
+
+#### Terminal 2: Start Frontend Dev Server
+
+```bash
+cd frontend
+npm run dev
+```
+
+UI available at `http://localhost:5173`
+
+## API Documentation
+
+See [backend/README.md](backend/README.md) for detailed API endpoints.
+
+## Component Descriptions
+
+### Backend Server
+- Central coordination point for all controllers
+- Manages controller registry and status
+- Distributes effects to multiple controllers
+- RESTful API for frontend and external systems
+
+### Frontend UI
+- Dashboard for viewing all controllers
+- Controller management (add, remove, configure)
+- Effect library browser
+- Canvas builder for creating multi-controller layouts
+- Effect configuration and preview
+
+## Development Workflow
+
+1. **Backend Development**: Modify files in `backend/src/`, uses hot-reload with nodemon
+2. **Frontend Development**: Modify React components in `frontend/src/`, hot-reload with Vite
+
+## Next Milestones
+
+- [ ] Effect distribution system
+- [ ] WebSocket real-time control
+- [ ] Effect library implementation
+- [ ] Canvas configuration UI
+- [ ] WLED/FastLED effect integration
+- [ ] Database persistence
+- [ ] User authentication
+- [ ] Performance optimization
+
+## Contributing
+
+See [CONTRIBUTING.md](docs/CONTRIBUTING.md) (to be created)
+
+## License
+
+See LICENSE file (to be created)
 

@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "ms-node.vscode-npm-scripts",
+    "bradlc.vscode-tailwindcss",
+    "wayou.vscode-todo-highlight",
+    "eamodio.gitlens",
+    "ms-vscode.makefile-tools"
+  ]
+}
