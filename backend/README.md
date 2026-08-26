@@ -154,6 +154,8 @@ updates based on stale configuration. Canvas mappings contain a `controllerId`
 and zero-based `stripIndex`, with optional `layout` (`series`, `parallel`, or
 `serpentine`), position, size, rotation, and reversal fields. Canvas frames
 are mapped into physical strip order before distribution.
+Each controller strip may belong to only one canvas; conflicting assignments
+return `409` with the conflicting mappings in the response details.
 
 ### Playback
 

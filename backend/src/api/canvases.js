@@ -32,18 +32,32 @@ function validateCanvasPayload(body, { partial = false } = {}) {
 export function createCanvasRouter({ canvasService }) {
   const router = Router();
   router.get('/', (req, res) => res.json(canvasService.list()));
-  router.post('/', (req, res) => res.status(201).json(canvasService.create(validateCanvasPayload(req.body))));
+  router.post('/', (req, res, next) => {
+    try {
+      return res.status(201).json(canvasService.create(validateCanvasPayload(req.body)));
+    } catch (error) {
+      return next(error);
+    }
+  });
   router.get('/:id', (req, res, next) => {
     const canvas = canvasService.get(req.params.id);
     return canvas ? res.json(canvas) : next(Object.assign(new Error('Canvas not found'), { statusCode: 404 }));
   });
   router.put('/:id', (req, res, next) => {
-    const canvas = canvasService.update(req.params.id, validateCanvasPayload(req.body), readRevision(req));
-    return canvas ? res.json(canvas) : next(Object.assign(new Error('Canvas not found'), { statusCode: 404 }));
+    try {
+      const canvas = canvasService.update(req.params.id, validateCanvasPayload(req.body), readRevision(req));
+      return canvas ? res.json(canvas) : next(Object.assign(new Error('Canvas not found'), { statusCode: 404 }));
+    } catch (error) {
+      return next(error);
+    }
   });
   router.patch('/:id', (req, res, next) => {
-    const canvas = canvasService.update(req.params.id, validateCanvasPayload(req.body, { partial: true }), readRevision(req));
-    return canvas ? res.json(canvas) : next(Object.assign(new Error('Canvas not found'), { statusCode: 404 }));
+    try {
+      const canvas = canvasService.update(req.params.id, validateCanvasPayload(req.body, { partial: true }), readRevision(req));
+      return canvas ? res.json(canvas) : next(Object.assign(new Error('Canvas not found'), { statusCode: 404 }));
+    } catch (error) {
+      return next(error);
+    }
   });
   router.delete('/:id', (req, res, next) => canvasService.remove(req.params.id) ? res.json({ success: true }) : next(Object.assign(new Error('Canvas not found'), { statusCode: 404 })));
   return router;

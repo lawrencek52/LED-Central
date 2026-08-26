@@ -11,6 +11,7 @@ export class CanvasService {
   get(id) { return this.repository.get(id); }
 
   create(input) {
+    this.assertStripsAvailable(input.mappings);
     const timestamp = this.now().toISOString();
     return this.repository.save({
       id: this.idFactory(),
@@ -24,6 +25,7 @@ export class CanvasService {
   update(id, input, expectedRevision) {
     const existing = this.get(id);
     if (!existing) return null;
+    this.assertStripsAvailable(input.mappings, id);
     if (expectedRevision !== undefined && expectedRevision !== existing.revision) {
       const error = new Error('Canvas revision conflict');
       error.statusCode = 409;
@@ -40,4 +42,29 @@ export class CanvasService {
   }
 
   remove(id) { return this.repository.remove(id); }
+
+  assertStripsAvailable(mappings = [], canvasId = null) {
+    const requested = new Set();
+    const conflicts = [];
+    for (const mapping of mappings) {
+      const key = `${mapping.controllerId}:${mapping.stripIndex}`;
+      if (requested.has(key)) conflicts.push({ ...mapping, reason: 'duplicate in canvas' });
+      requested.add(key);
+    }
+
+    for (const canvas of this.repository.list()) {
+      if (canvas.id === canvasId) continue;
+      for (const mapping of canvas.mappings) {
+        const key = `${mapping.controllerId}:${mapping.stripIndex}`;
+        if (requested.has(key)) conflicts.push({ ...mapping, reason: `already assigned to canvas ${canvas.name}` });
+      }
+    }
+
+    if (conflicts.length > 0) {
+      const error = new Error('One or more LED strips are already assigned to a canvas');
+      error.statusCode = 409;
+      error.details = { mappings: conflicts };
+      throw error;
+    }
+  }
 }

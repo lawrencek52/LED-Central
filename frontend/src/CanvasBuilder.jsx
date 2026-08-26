@@ -26,9 +26,14 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
   }
 
   function addStrip() {
-    const controller = controllers[0]
-    if (!controller) return
-    const stripIndex = draft.mappings.filter((mapping) => mapping.controllerId === controller.id).length
+    const used = new Set(canvases.filter((canvas) => canvas.id !== selectedId).flatMap((canvas) => canvas.mappings.map((mapping) => `${mapping.controllerId}:${mapping.stripIndex}`)))
+    draft.mappings.forEach((mapping) => used.add(`${mapping.controllerId}:${mapping.stripIndex}`))
+    const available = controllers.flatMap((controller) => Array.from({ length: controller.strips || 0 }, (_, stripIndex) => ({ controller, stripIndex }))).find(({ controller, stripIndex }) => !used.has(`${controller.id}:${stripIndex}`))
+    if (!available) {
+      onError('All controller strips are already assigned to canvases.')
+      return
+    }
+    const { controller, stripIndex } = available
     const ledCount = controller.ledCounts?.[stripIndex] || 215
     const mapping = {
       controllerId: controller.id,
@@ -123,7 +128,9 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
         <div className="strip-mapping-list">
           {draft.mappings.map((mapping, index) => {
             const controller = controllers.find((item) => item.id === mapping.controllerId)
-            return <div className="strip-mapping" key={`${mapping.controllerId}-${mapping.stripIndex}-${index}`}><strong>Strip {index + 1}</strong><select value={mapping.controllerId} onChange={(event) => updateMapping(index, { controllerId: event.target.value })}>{controllers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select value={mapping.stripIndex} onChange={(event) => updateMapping(index, { stripIndex: Number(event.target.value), width: controller?.ledCounts?.[Number(event.target.value)] || 215 })}>{Array.from({ length: controller?.strips || 0 }, (_, stripIndex) => <option key={stripIndex} value={stripIndex}>Strip {stripIndex + 1}</option>)}</select><label>LEDs<input type="number" min="1" max="4200" value={mapping.width} onChange={(event) => updateMapping(index, { width: Number(event.target.value) })} /></label>{draft.mode === 'parallel' && <label>Offset<input type="text" inputMode="numeric" pattern="[0-9]*" value={String(mapping.x ?? '')} onChange={(event) => updateMapping(index, { x: event.target.value })} /></label>}<label>Direction<select value={mapping.reversed ? 'rtl' : 'ltr'} onChange={(event) => updateMapping(index, { reversed: event.target.value === 'rtl' })}><option value="ltr">Left to right</option><option value="rtl">Right to left</option></select></label><button className="icon-action danger" type="button" onClick={() => setDraft({ ...draft, mappings: draft.mappings.filter((_, mappingIndex) => mappingIndex !== index) })}>Remove</button></div>
+            const assignedElsewhere = new Set(canvases.filter((canvas) => canvas.id !== selectedId).flatMap((canvas) => canvas.mappings.map((item) => `${item.controllerId}:${item.stripIndex}`)))
+            const assignedInDraft = new Set(draft.mappings.map((item) => `${item.controllerId}:${item.stripIndex}`))
+            return <div className="strip-mapping" key={`${mapping.controllerId}-${mapping.stripIndex}-${index}`}><strong>Strip {index + 1}</strong><select value={mapping.controllerId} onChange={(event) => updateMapping(index, { controllerId: event.target.value })}>{controllers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select value={mapping.stripIndex} onChange={(event) => updateMapping(index, { stripIndex: Number(event.target.value), width: controller?.ledCounts?.[Number(event.target.value)] || 215 })}>{Array.from({ length: controller?.strips || 0 }, (_, stripIndex) => { const key = `${controller.id}:${stripIndex}`; return <option key={stripIndex} value={stripIndex} disabled={stripIndex !== mapping.stripIndex && (assignedElsewhere.has(key) || assignedInDraft.has(key))}>Strip {stripIndex + 1}{assignedElsewhere.has(key) ? ' (used)' : ''}</option> })}</select><label>LEDs<input type="number" min="1" max="4200" value={mapping.width} onChange={(event) => updateMapping(index, { width: Number(event.target.value) })} /></label>{draft.mode === 'parallel' && <label>Offset<input type="text" inputMode="numeric" pattern="[0-9]*" value={String(mapping.x ?? '')} onChange={(event) => updateMapping(index, { x: event.target.value })} /></label>}<label>Direction<select value={mapping.reversed ? 'rtl' : 'ltr'} onChange={(event) => updateMapping(index, { reversed: event.target.value === 'rtl' })}><option value="ltr">Left to right</option><option value="rtl">Right to left</option></select></label><button className="icon-action danger" type="button" onClick={() => setDraft({ ...draft, mappings: draft.mappings.filter((_, mappingIndex) => mappingIndex !== index) })}>Remove</button></div>
           })}
         </div>
         <button className="primary-button" type="submit" disabled={saving}>{saving ? 'Saving canvas...' : selectedId === 'new' ? 'Create canvas' : 'Save canvas'}</button>
