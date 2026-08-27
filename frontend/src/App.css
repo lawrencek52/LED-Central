@@ -359,6 +359,19 @@ body::after {
   display: flex;
   gap: 10px;
 }
+.primary-button.is-inactive,
+.secondary-button.is-inactive {
+  border-color: rgba(142, 167, 200, 0.35);
+  color: var(--muted);
+  background: rgba(4, 10, 22, 0.85);
+  box-shadow: none;
+}
+.secondary-button.is-active {
+  border-color: rgba(57, 255, 136, 0.55);
+  color: #00180d;
+  background: var(--green);
+  box-shadow: 0 0 18px rgba(57, 255, 136, 0.16);
+}
 .realtime-note {
   color: var(--muted);
   font-size: 10px;
@@ -940,6 +953,78 @@ h3 {
   color: var(--muted);
   background: transparent;
   font-size: 11px;
+}
+.canvas-inventory,
+.canvas-editor-panel {
+  overflow: hidden;
+}
+.canvas-inventory-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1px;
+  background: rgba(74, 222, 255, 0.12);
+}
+.canvas-inventory-card,
+.canvas-inventory-new {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 0;
+  color: var(--ink);
+  background: var(--panel);
+  text-align: left;
+}
+.canvas-inventory-card:hover,
+.canvas-inventory-card.selected {
+  background: rgba(74, 222, 255, 0.1);
+}
+.canvas-inventory-card strong,
+.canvas-inventory-card small {
+  display: block;
+}
+.canvas-inventory-card strong {
+  font:
+    500 14px "Space Grotesk",
+    sans-serif;
+}
+.canvas-inventory-card small {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.canvas-inventory-preview {
+  position: relative;
+  display: grid;
+  grid-template-rows: repeat(4, 8px);
+  gap: 3px;
+  min-height: 41px;
+  padding: 5px;
+  overflow: hidden;
+  border: 1px solid rgba(74, 222, 255, 0.2);
+  background: rgba(2, 4, 13, 0.75);
+}
+.canvas-inventory-preview span {
+  grid-row: var(--strip-row);
+  grid-column: 1;
+  width: var(--strip-size);
+  margin-left: var(--strip-start);
+  border: 1px solid rgba(57, 255, 136, 0.6);
+  background: var(--green);
+}
+.canvas-inventory-new {
+  place-items: center;
+  min-height: 108px;
+  color: var(--green);
+  background: rgba(57, 255, 136, 0.06);
+  font:
+    600 12px "Space Grotesk",
+    sans-serif;
+  text-align: center;
+}
+.canvas-editor-panel > .canvas-toolbar {
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid rgba(74, 222, 255, 0.14);
 }
 .status-workspace {
   display: grid;

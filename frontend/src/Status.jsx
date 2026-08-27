@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiClient } from "./api/client";
 
-function Preview({ preview }) {
+function Preview({ preview, reversed }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -27,6 +27,7 @@ function Preview({ preview }) {
   return preview?.pixels && preview.width && preview.height ? (
     <canvas
       className="status-preview"
+      style={{ transform: reversed ? "scaleX(-1)" : "none" }}
       ref={canvasRef}
       aria-label="Controller frame preview"
     />
@@ -101,7 +102,7 @@ function Status({ onError }) {
                     <small>{strip.kibPerSecond} KiB/s</small>
                     <small>{strip.queuedFrames} queued</small>
                   </span>
-                  <Preview preview={strip.preview} />
+                  <Preview preview={strip.preview} reversed={strip.reversed} />
                 </div>
               ))}
             </div>

@@ -12,6 +12,8 @@ export class PlaybackService {
     now = () => Date.now(),
     frameRate = 20,
     bufferFrames = 100,
+    refillFrames = Math.floor(bufferFrames / 2),
+    refillLeadFrames = Math.min(bufferFrames - 1, refillFrames + 10),
   }) {
     this.canvasService = canvasService;
     this.effectService = effectService;
@@ -22,6 +24,8 @@ export class PlaybackService {
     this.now = now;
     this.frameRate = frameRate;
     this.bufferFrames = bufferFrames;
+    this.refillFrames = refillFrames;
+    this.refillLeadFrames = refillLeadFrames;
     this.sessions = new Map();
     this.timers = new Map();
     this.activeByCanvas = new Map();
@@ -31,7 +35,7 @@ export class PlaybackService {
     return [...this.sessions.values()];
   }
 
-  async start({ canvasId, effectId, parameters = {} }) {
+  async start({ canvasId, effectId, parameters = {}, fps }) {
     const canvas = this.canvasService.get(canvasId);
     const effect = this.effectService.get(effectId);
     if (!canvas) throw new EffectRenderError("Canvas not found", 404);
@@ -40,7 +44,9 @@ export class PlaybackService {
     const previousSession = this.activeByCanvas.get(canvasId);
     if (previousSession) this.stop(previousSession.id);
 
-    const intervalMs = this.frameIntervalMs();
+    const frameRate =
+      fps === undefined ? this.frameRate : this.normalizeFrameRate(fps);
+    const intervalMs = this.frameIntervalMs(frameRate);
     const startedAt = this.now();
     const firstFrameAt = Math.max(
       startedAt + intervalMs,
@@ -53,6 +59,7 @@ export class PlaybackService {
       startedAt,
       firstFrameAt,
       count: this.bufferFrames,
+      frameRate,
     });
     const distribution = await this.distributeFrames({ canvas, frames });
     const session = {
@@ -65,6 +72,7 @@ export class PlaybackService {
       lastFrameAt: frames[frames.length - 1].timestamp,
       distribution,
       frameCount: frames.length,
+      frameRate,
     };
     this.scheduleFrames({ session, canvas, effect });
     this.sessions.set(session.id, session);
@@ -113,18 +121,34 @@ export class PlaybackService {
     });
   }
 
-  frameIntervalMs() {
-    return Math.ceil(1000 / this.frameRate);
+  normalizeFrameRate(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 60) {
+      throw new EffectRenderError("FPS must be between 1 and 60", 400);
+    }
+    return Math.round(parsed);
   }
 
-  renderFrames({ effect, canvas, parameters, startedAt, firstFrameAt, count }) {
+  frameIntervalMs(frameRate = this.frameRate) {
+    return Math.ceil(1000 / frameRate);
+  }
+
+  renderFrames({
+    effect,
+    canvas,
+    parameters,
+    startedAt,
+    firstFrameAt,
+    count,
+    frameRate = this.frameRate,
+  }) {
     return Array.from({ length: count }, (_, index) =>
       this.renderFrame({
         effect,
         canvas,
         parameters,
         startedAt,
-        timestamp: firstFrameAt + index * this.frameIntervalMs(),
+        timestamp: firstFrameAt + index * this.frameIntervalMs(frameRate),
       }),
     );
   }
@@ -155,8 +179,10 @@ export class PlaybackService {
           canvas,
           parameters: session.parameters,
           startedAt: Date.parse(session.startedAt),
-          firstFrameAt: session.lastFrameAt + this.frameIntervalMs(),
-          count: this.bufferFrames,
+          firstFrameAt:
+            session.lastFrameAt + this.frameIntervalMs(session.frameRate),
+          count: this.refillFrames,
+          frameRate: session.frameRate,
         });
         session.lastFrameAt = frames[frames.length - 1].timestamp;
         const distribution = await this.distributeFrames({ canvas, frames });
@@ -174,12 +200,28 @@ export class PlaybackService {
       }
       this.timers.set(
         session.id,
-        setTimeout(tick, Math.max(0, session.lastFrameAt - this.now())),
+        setTimeout(
+          tick,
+          Math.max(
+            0,
+            session.lastFrameAt -
+              this.now() -
+              this.refillLeadFrames * this.frameIntervalMs(session.frameRate),
+          ),
+        ),
       );
     };
     this.timers.set(
       session.id,
-      setTimeout(tick, Math.max(0, session.lastFrameAt - this.now())),
+      setTimeout(
+        tick,
+        Math.max(
+          0,
+          session.lastFrameAt -
+            this.now() -
+            this.refillLeadFrames * this.frameIntervalMs(session.frameRate),
+        ),
+      ),
     );
   }
 }

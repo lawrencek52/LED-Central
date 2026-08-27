@@ -34,6 +34,7 @@ export function createStatusRouter({
               ? `${controller.host}:${controller.port}`
               : "Unknown controller",
             stripIndex: mapping.stripIndex,
+            reversed: Boolean(mapping.reversed),
             framesPerSecond: preview.recvFps ?? queue.framesPerSecond,
             recvFps: preview.recvFps ?? 0,
             drawFps: preview.drawFps ?? 0,

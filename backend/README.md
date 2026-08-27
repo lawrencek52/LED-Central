@@ -91,7 +91,8 @@ reversal. A physical controller strip can belong to only one canvas.
 
 Playback sessions are independent per canvas. Starting another effect on a
 canvas stops its current session. Each session renders and sends 100 timestamped
-frames ahead, then refills the look-ahead batch as the timeline advances.
+frames ahead, then refills with 50 frames while more than 50 frames remain in
+the look-ahead queue.
 
 Example:
 

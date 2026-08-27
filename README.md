@@ -17,8 +17,8 @@ configured controllers. The controller firmware remains in the sibling
   and multiple controllers.
 - Built-in `solid`, `gradient`, and `wave` effects.
 - Continuous playback with independent scheduling per canvas.
-- A 100-frame look-ahead buffer, refilled continuously at the configured frame
-  rate.
+- A 100-frame look-ahead buffer, refilled with 50 frames while more than 50
+   frames remain queued.
 - Serialized TCP sends and reconnect handling per controller.
 - Optional bearer-token authentication for the API and browser realtime socket.
 - Status view showing each canvas, active effect, target FPS, mapped strips,

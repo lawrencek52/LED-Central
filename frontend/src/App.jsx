@@ -156,6 +156,12 @@ function App() {
     (total, controller) => total + (controller.strips || 0),
     0,
   );
+  const pageTitles = {
+    effects: "Effect selection",
+    status: "System status",
+    canvases: "Canvas definition",
+    controllers: "Controller dashboard",
+  };
 
   return (
     <main className="app-shell">
@@ -194,7 +200,7 @@ function App() {
       <section className="page-heading">
         <div>
           <p className="eyebrow">Control room / live inventory</p>
-          <h1>Controller dashboard</h1>
+          <h1>{pageTitles[activeTab]}</h1>
           <p className="heading-copy">
             Monitor the network and keep every light surface within reach.
           </p>
@@ -222,7 +228,7 @@ function App() {
           type="button"
           onClick={() => setActiveTab("effects")}
         >
-          Effect selection <span>{effects.length}</span>
+          Effects <span>{effects.length}</span>
         </button>
         <button
           className={activeTab === "status" ? "active" : ""}
@@ -236,7 +242,7 @@ function App() {
           type="button"
           onClick={() => setActiveTab("canvases")}
         >
-          Canvas definition <span>{canvases.length}</span>
+          Canvases <span>{canvases.length}</span>
         </button>
         <button
           className={activeTab === "controllers" ? "active" : ""}
