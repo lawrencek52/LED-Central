@@ -3,6 +3,7 @@ import { apiClient } from "./api/client";
 import { createRealtimeClient } from "./api/realtime";
 import CanvasBuilder from "./CanvasBuilder";
 import EffectSelector from "./EffectSelector";
+import Status from "./Status";
 import "./App.css";
 
 const emptyForm = {
@@ -222,6 +223,13 @@ function App() {
           onClick={() => setActiveTab("effects")}
         >
           Effect selection <span>{effects.length}</span>
+        </button>
+        <button
+          className={activeTab === "status" ? "active" : ""}
+          type="button"
+          onClick={() => setActiveTab("status")}
+        >
+          Status
         </button>
         <button
           className={activeTab === "canvases" ? "active" : ""}
@@ -465,6 +473,7 @@ function App() {
           lastEvent={lastEvent}
         />
       )}
+      {activeTab === "status" && <Status onError={setError} />}
     </main>
   );
 }

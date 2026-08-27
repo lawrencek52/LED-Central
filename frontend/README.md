@@ -1,130 +1,65 @@
 # LED-Central Frontend
 
-React + Vite web interface for the LED-Central controller. Provides a modern UI for managing LED controllers, strips, effects, and creating complex LED canvases.
+React and Vite operator interface for LED-Central. The UI communicates with
+the backend API; it does not connect directly to LED controllers.
 
-## Features
-
-- Controller management dashboard
-- Real-time effect preview
-- Canvas configuration (serial, parallel, XY serpentine)
-- Effect library browser and configuration
-- Multi-strip effect composition
-
-## Prerequisites
-
-- Node.js >= 14.0
-- npm or yarn
-- Backend server running on localhost:3001
-
-## Installation
+## Install and Run
 
 ```bash
 npm install
+npm run dev       # http://localhost:5173
+npm run build     # production bundle in dist/
+npm run preview   # serve the production bundle locally
+npm run lint      # Oxlint
 ```
 
-## Development
+The backend should be running on port `3001`. The development UI can be opened
+from another device on the LAN using the Linux host's address when the backend
+is bound to `0.0.0.0`.
 
-Start the development server:
+## Environment
 
-```bash
-npm run dev
-```
+The API client derives the backend host from the browser hostname by default.
+These variables can override that behavior:
 
-The app will be available at `http://localhost:5173`
-
-### Hot Module Replacement
-
-Changes are automatically reflected in the browser as you develop.
-
-## Building for Production
-
-Create an optimized production build:
-
-```bash
-npm run build
-```
-
-Output files will be in the `dist/` directory.
-
-## Preview Production Build
-
-```bash
-npm run preview
-```
-
-## Project Structure
-
-```
-frontend/
-├── src/
-│   ├── components/       # React components
-│   │   ├── ControllerList.jsx
-│   │   ├── EffectLibrary.jsx
-│   │   ├── CanvasBuilder.jsx
-│   │   └── EffectConfig.jsx
-│   ├── pages/           # Page components
-│   ├── services/        # API service layer
-│   ├── hooks/           # Custom React hooks
-│   ├── styles/          # CSS/styling
-│   ├── App.jsx          # Root component
-│   └── main.jsx         # Entry point
-├── index.html           # HTML template
-├── vite.config.js       # Vite configuration
-├── package.json         # Dependencies
-├── .env.development     # Dev environment variables
-└── README.md           # This file
-```
-
-## Environment Variables
-
-### Development (.env.development)
-
-```
+```text
 VITE_API_URL=http://localhost:3001/api
 VITE_WS_URL=ws://localhost:3001/api/realtime
 VITE_API_TOKEN=
 VITE_WS_TOKEN=
 ```
 
-## API Integration
+## UI Workflows
 
-The frontend communicates with the backend API:
+The page opens on **Effect selection**. The tabs are ordered Effect selection,
+Status, Canvas definition, and Controllers.
 
-- List controllers: `GET /api/controllers`
-- Register controller: `POST /api/controllers`
-- Get controller details: `GET /api/controllers/:id`
-- Delete controller: `DELETE /api/controllers/:id`
+- **Effect selection** chooses a canvas and effect, edits renderer parameters,
+  and starts or stops playback.
+- **Status** shows every canvas, its active effect and target FPS, plus each
+  mapped strip's controller identity, address, preview, receive FPS, draw FPS,
+  KiB/s, and queued frames. Status data refreshes every second and strip
+  details stack on narrow displays.
+- **Canvas definition** creates logical surfaces and maps them to physical
+  controller strips with series, parallel, or serpentine layouts.
+- **Controllers** registers devices, manages strip counts and LED counts, and
+  connects or disconnects devices.
 
-## Key Pages
+## Source Layout
 
-### Dashboard
+```text
+src/
+├── App.jsx             Main shell, tabs, dashboard loading, and errors
+├── CanvasBuilder.jsx   Canvas and strip mapping editor
+├── EffectSelector.jsx  Effect selection and playback controls
+├── Status.jsx          Live canvas, strip, preview, and telemetry view
+├── api/
+│   ├── client.js       REST client
+│   └── realtime.js     Browser WebSocket client
+├── App.css             Application layout and responsive styles
+└── main.jsx            React entry point
+```
 
-Overview of all connected controllers and their status.
-
-### Controllers
-
-Manage controller registration, connection, and basic settings.
-
-### Effects Library
-
-Browse and configure available LED effects.
-
-### Canvas Builder
-
-Create complex LED layouts by combining multiple strips and controllers.
-
-## Technologies
-
-- **React** - UI framework
-- **Vite** - Build tool
-- **Axios** - HTTP client
-- **Oxlint** - Code linting
-
-## Next Steps
-
-1. Implement controller dashboard with real-time status
-2. Build effect library browser and configuration UI
-3. Create canvas builder with visual layout editor
-4. Add WebSocket support for real-time effect preview
-5. Implement effect management and custom effects
-6. Add user authentication and controller access control
+The API client includes controller, canvas, effect, playback, health, and
+status operations. The realtime client receives backend events and reconnects
+with bounded backoff.

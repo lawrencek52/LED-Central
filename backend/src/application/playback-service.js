@@ -11,6 +11,7 @@ export class PlaybackService {
     idFactory = uuidv4,
     now = () => Date.now(),
     frameRate = 20,
+    bufferFrames = 100,
   }) {
     this.canvasService = canvasService;
     this.effectService = effectService;
@@ -20,6 +21,7 @@ export class PlaybackService {
     this.idFactory = idFactory;
     this.now = now;
     this.frameRate = frameRate;
+    this.bufferFrames = bufferFrames;
     this.sessions = new Map();
     this.timers = new Map();
     this.activeByCanvas = new Map();
@@ -44,17 +46,15 @@ export class PlaybackService {
       startedAt + intervalMs,
       (previousSession?.lastFrameAt ?? 0) + intervalMs,
     );
-    const frame = this.renderFrame({
+    const frames = this.renderFrames({
       effect,
       canvas,
       parameters,
       startedAt,
-      timestamp: firstFrameAt,
+      firstFrameAt,
+      count: this.bufferFrames,
     });
-    const distribution = await this.distributionService.distributeCanvasFrame({
-      canvas,
-      frame,
-    });
+    const distribution = await this.distributeFrames({ canvas, frames });
     const session = {
       id: this.idFactory(),
       status: "playing",
@@ -62,9 +62,9 @@ export class PlaybackService {
       effectId,
       parameters,
       startedAt: new Date(startedAt).toISOString(),
-      lastFrameAt: frame.timestamp,
+      lastFrameAt: frames[frames.length - 1].timestamp,
       distribution,
-      frameCount: 1,
+      frameCount: frames.length,
     };
     this.scheduleFrames({ session, canvas, effect });
     this.sessions.set(session.id, session);
@@ -117,24 +117,50 @@ export class PlaybackService {
     return Math.ceil(1000 / this.frameRate);
   }
 
+  renderFrames({ effect, canvas, parameters, startedAt, firstFrameAt, count }) {
+    return Array.from({ length: count }, (_, index) =>
+      this.renderFrame({
+        effect,
+        canvas,
+        parameters,
+        startedAt,
+        timestamp: firstFrameAt + index * this.frameIntervalMs(),
+      }),
+    );
+  }
+
+  async distributeFrames({ canvas, frames }) {
+    if (this.distributionService.distributeCanvasFrames) {
+      return this.distributionService.distributeCanvasFrames({
+        canvas,
+        frames,
+      });
+    }
+    let distribution;
+    for (const frame of frames) {
+      distribution = await this.distributionService.distributeCanvasFrame({
+        canvas,
+        frame,
+      });
+    }
+    return distribution;
+  }
+
   scheduleFrames({ session, canvas, effect }) {
     const tick = async () => {
       if (session.status !== "playing") return;
       try {
-        const frame = this.renderFrame({
+        const frames = this.renderFrames({
           effect,
           canvas,
           parameters: session.parameters,
           startedAt: Date.parse(session.startedAt),
-          timestamp: session.lastFrameAt + this.frameIntervalMs(),
+          firstFrameAt: session.lastFrameAt + this.frameIntervalMs(),
+          count: this.bufferFrames,
         });
-        session.lastFrameAt = frame.timestamp;
-        const distribution =
-          await this.distributionService.distributeCanvasFrame({
-            canvas,
-            frame,
-          });
-        session.frameCount += 1;
+        session.lastFrameAt = frames[frames.length - 1].timestamp;
+        const distribution = await this.distributeFrames({ canvas, frames });
+        session.frameCount += frames.length;
         session.distribution = distribution;
       } catch (error) {
         session.status = "error";
