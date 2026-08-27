@@ -310,13 +310,13 @@ function write(socket, data) {
       socket.destroy();
       reject(new Error("Controller write timed out"));
     }, 5000);
+    const onClose = () => finish(new Error("Controller connection closed"));
     const finish = (error) => {
       clearTimeout(timeout);
+      socket.removeListener("close", onClose);
       error ? reject(error) : resolve();
     };
-    socket.once("close", () =>
-      finish(new Error("Controller connection closed")),
-    );
+    socket.once("close", onClose);
     socket.write(data, finish);
   });
 }

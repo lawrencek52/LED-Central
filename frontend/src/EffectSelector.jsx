@@ -2,8 +2,18 @@ import { useEffect, useState } from "react";
 import { apiClient } from "./api/client";
 
 function EffectSelector({ canvases, effects, onError, lastEvent }) {
-  const [canvasId, setCanvasId] = useState(canvases[0]?.id || "");
-  const [effectId, setEffectId] = useState(effects[0]?.id || "");
+  const [canvasId, setCanvasId] = useState(
+    () =>
+      window.localStorage.getItem("led-central.selectedCanvas") ||
+      canvases[0]?.id ||
+      "",
+  );
+  const [effectId, setEffectId] = useState(
+    () =>
+      window.localStorage.getItem("led-central.selectedEffect") ||
+      effects[0]?.id ||
+      "",
+  );
   const [parameters, setParameters] = useState({});
   const [session, setSession] = useState(null);
   const [working, setWorking] = useState(false);
@@ -15,9 +25,38 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
     session.canvasId === canvasId &&
     session.effectId === effectId;
 
+  function defaultParameters(currentEffect) {
+    return Object.fromEntries(
+      Object.entries(currentEffect?.parameters || {}).map(
+        ([name, definition]) => [name, definition.default ?? ""],
+      ),
+    );
+  }
+
+  function storedParameters(currentEffect) {
+    try {
+      const stored = JSON.parse(
+        window.localStorage.getItem(
+          `led-central.parameters.${currentEffect.id}`,
+        ) || "null",
+      );
+      return stored && typeof stored === "object"
+        ? { ...defaultParameters(currentEffect), ...stored }
+        : defaultParameters(currentEffect);
+    } catch {
+      return defaultParameters(currentEffect);
+    }
+  }
+
   useEffect(() => {
-    if (!canvasId && canvases[0]) setCanvasId(canvases[0].id);
+    if (!canvases.some((canvas) => canvas.id === canvasId) && canvases[0])
+      setCanvasId(canvases[0].id);
   }, [canvasId, canvases]);
+
+  useEffect(() => {
+    if (canvasId)
+      window.localStorage.setItem("led-central.selectedCanvas", canvasId);
+  }, [canvasId]);
 
   useEffect(() => {
     if (!effectId && effects[0]) setEffectId(effects[0].id);
@@ -26,15 +65,13 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
   }, [effectId, effects]);
 
   useEffect(() => {
+    if (effectId)
+      window.localStorage.setItem("led-central.selectedEffect", effectId);
+  }, [effectId]);
+
+  useEffect(() => {
     if (!effect) return;
-    setParameters(
-      Object.fromEntries(
-        Object.entries(effect.parameters || {}).map(([name, definition]) => [
-          name,
-          definition.default ?? "",
-        ]),
-      ),
-    );
+    setParameters(storedParameters(effect));
   }, [effect]);
 
   async function startPlayback() {
@@ -73,10 +110,24 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
   }
 
   function updateParameter(name, value, definition) {
-    setParameters({
+    const next = {
       ...parameters,
       [name]: definition.type === "number" ? Number(value) : value,
-    });
+    };
+    setParameters(next);
+    window.localStorage.setItem(
+      `led-central.parameters.${effect.id}`,
+      JSON.stringify(next),
+    );
+  }
+
+  function resetParameters() {
+    const defaults = defaultParameters(effect);
+    setParameters(defaults);
+    window.localStorage.setItem(
+      `led-central.parameters.${effect.id}`,
+      JSON.stringify(defaults),
+    );
   }
 
   return (
@@ -251,6 +302,14 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
                     Stop
                   </button>
                 )}
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={resetParameters}
+                  disabled={working}
+                >
+                  Reset defaults
+                </button>
               </div>
               <p className="form-note">
                 Frames render against the selected canvas and distribute to its
