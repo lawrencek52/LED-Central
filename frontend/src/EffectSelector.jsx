@@ -109,6 +109,15 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
     }
   }
 
+  function formatNumericValue(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return String(value ?? "");
+    return numericValue.toLocaleString(undefined, {
+      maximumSignificantDigits: 3,
+      maximumFractionDigits: 3,
+    });
+  }
+
   function updateParameter(name, value, definition) {
     const next = {
       ...parameters,
@@ -176,7 +185,7 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
           <div className="panel-header">
             <div>
               <p className="eyebrow">Effect library</p>
-              <h2>Choose a pattern</h2>
+              <h2>Choose an effect</h2>
             </div>
             <span className="count-badge">{effects.length} available</span>
           </div>
@@ -205,7 +214,7 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
         <div className="effect-config panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">Pattern controls</p>
+              <p className="eyebrow">Effect controls</p>
               <h2>{effect?.name || "Select an effect"}</h2>
             </div>
             {effect && (
@@ -251,7 +260,11 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
                           type="range"
                           min={definition.min ?? 0}
                           max={definition.max ?? 100}
-                          step="any"
+                          step={
+                            Number.isInteger(Number(definition.default ?? 0))
+                              ? 1
+                              : 0.01
+                          }
                           value={parameters[name] ?? definition.default ?? 0}
                           onChange={(event) =>
                             updateParameter(
@@ -262,7 +275,9 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
                           }
                         />
                         <output>
-                          {parameters[name] ?? definition.default}
+                          {formatNumericValue(
+                            parameters[name] ?? definition.default ?? 0,
+                          )}
                         </output>
                       </span>
                     )}
@@ -319,7 +334,7 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
           ) : (
             <div className="empty-state">
               <strong>Select an effect</strong>
-              <span>Choose a pattern to configure its controls.</span>
+              <span>Choose an effect to configure its controls.</span>
             </div>
           )}
         </div>
