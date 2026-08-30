@@ -4,6 +4,8 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "========================================"
 echo "LED-Central Linux Setup"
 echo "========================================"
@@ -35,19 +37,19 @@ fi
 
 echo ""
 echo -e "${YELLOW}Step 2: Installing backend dependencies...${NC}"
-cd "$(dirname "$0")/backend"
+cd "$SCRIPT_DIR/backend"
 npm install
 echo -e "${GREEN}✓ Backend dependencies installed${NC}"
 
 echo ""
 echo -e "${YELLOW}Step 3: Installing frontend dependencies...${NC}"
-cd "$(dirname "$0")/frontend"
+cd "$SCRIPT_DIR/frontend"
 npm install
 echo -e "${GREEN}✓ Frontend dependencies installed${NC}"
 
 echo ""
 echo -e "${YELLOW}Step 4: Creating .env files from templates...${NC}"
-cd "$(dirname "$0")"
+cd "$SCRIPT_DIR"
 
 # Backend .env
 if [ ! -f backend/.env ]; then

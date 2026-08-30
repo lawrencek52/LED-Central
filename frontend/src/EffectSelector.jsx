@@ -130,6 +130,21 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
     );
   }
 
+  function paletteColors(value, definition) {
+    const source = value ?? definition.default;
+    if (Array.isArray(source)) return source;
+    if (Array.isArray(source?.colors)) return source.colors;
+    return ["#ffffff"];
+  }
+
+  function updatePaletteColor(name, definition, index, colorValue) {
+    const colors = [...paletteColors(parameters[name], definition)];
+    colors[index] = colorValue;
+    const current = parameters[name] ?? definition.default;
+    const next = Array.isArray(current) ? colors : { ...current, colors };
+    updateParameter(name, next, definition);
+  }
+
   function resetParameters() {
     const defaults = defaultParameters(effect);
     setParameters(defaults);
@@ -254,6 +269,48 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
                           }
                         />
                       </span>
+                    ) : definition.type === "palette" ? (
+                      <span className="color-control">
+                        {paletteColors(parameters[name], definition).map(
+                          (colorValue, index) => (
+                            <input
+                              key={index}
+                              type="color"
+                              value={colorValue || "#ffffff"}
+                              onChange={(event) =>
+                                updatePaletteColor(
+                                  name,
+                                  definition,
+                                  index,
+                                  event.target.value,
+                                )
+                              }
+                            />
+                          ),
+                        )}
+                      </span>
+                    ) : definition.type === "boolean" ? (
+                      <input
+                        type="checkbox"
+                        checked={Boolean(
+                          parameters[name] ?? definition.default,
+                        )}
+                        onChange={(event) =>
+                          updateParameter(
+                            name,
+                            event.target.checked,
+                            definition,
+                          )
+                        }
+                      />
+                    ) : definition.type === "string" ? (
+                      <input
+                        type="text"
+                        value={parameters[name] ?? definition.default ?? ""}
+                        onChange={(event) =>
+                          updateParameter(name, event.target.value, definition)
+                        }
+                      />
                     ) : (
                       <span className="number-control">
                         <input

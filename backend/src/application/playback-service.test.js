@@ -151,7 +151,7 @@ test("continues scheduling frames after the first playback tick", async () => {
   service.stop(session.id);
 });
 
-test("refills the controller queue before the look-ahead buffer drains", async () => {
+test("tops up the controller queue in small paced batches instead of large bursts", async () => {
   const batches = [];
   const service = new PlaybackService({
     canvasService: {
@@ -188,18 +188,22 @@ test("refills the controller queue before the look-ahead buffer drains", async (
       },
     },
     idFactory: () => "session-1",
-    frameRate: 1000,
-    bufferFrames: 4,
-    refillFrames: 2,
+    frameRate: 100,
+    targetQueueMs: 40,
   });
 
-  const session = await service.start({
-    canvasId: "canvas-1",
-    effectId: "solid",
-  });
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  try {
+    const session = await service.start({
+      canvasId: "canvas-1",
+      effectId: "solid",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 35));
 
-  assert.deepEqual(batches.slice(0, 2), [4, 2]);
-  assert.equal(session.status, "playing");
-  service.stop(session.id);
+    assert.equal(batches[0], 4);
+    assert.ok(batches.slice(1).every((size) => size <= 3));
+    assert.equal(session.status, "playing");
+    service.stop(session.id);
+  } finally {
+    for (const session of service.list()) service.stop(session.id);
+  }
 });

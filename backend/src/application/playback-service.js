@@ -11,9 +11,7 @@ export class PlaybackService {
     idFactory = uuidv4,
     now = () => Date.now(),
     frameRate = 20,
-    bufferFrames = 100,
-    refillFrames = Math.floor(bufferFrames / 2),
-    refillLeadFrames = Math.min(bufferFrames - 1, refillFrames + 10),
+    targetQueueMs = 1500,
   }) {
     this.canvasService = canvasService;
     this.effectService = effectService;
@@ -23,9 +21,7 @@ export class PlaybackService {
     this.idFactory = idFactory;
     this.now = now;
     this.frameRate = frameRate;
-    this.bufferFrames = bufferFrames;
-    this.refillFrames = refillFrames;
-    this.refillLeadFrames = refillLeadFrames;
+    this.targetQueueMs = targetQueueMs;
     this.sessions = new Map();
     this.timers = new Map();
     this.activeByCanvas = new Map();
@@ -58,7 +54,7 @@ export class PlaybackService {
       parameters,
       startedAt,
       firstFrameAt,
-      count: this.bufferFrames,
+      count: this.queueFrameCount(frameRate),
       frameRate,
     });
     const distribution = await this.distributeFrames({ canvas, frames });
@@ -133,6 +129,13 @@ export class PlaybackService {
     return Math.ceil(1000 / frameRate);
   }
 
+  queueFrameCount(frameRate = this.frameRate) {
+    return Math.max(
+      1,
+      Math.round(this.targetQueueMs / this.frameIntervalMs(frameRate)),
+    );
+  }
+
   renderFrames({
     effect,
     canvas,
@@ -173,21 +176,33 @@ export class PlaybackService {
   scheduleFrames({ session, canvas, effect }) {
     const tick = async () => {
       if (session.status !== "playing") return;
+      const intervalMs = this.frameIntervalMs(session.frameRate);
       try {
-        const frames = this.renderFrames({
-          effect,
-          canvas,
-          parameters: session.parameters,
-          startedAt: Date.parse(session.startedAt),
-          firstFrameAt:
-            session.lastFrameAt + this.frameIntervalMs(session.frameRate),
-          count: this.refillFrames,
-          frameRate: session.frameRate,
-        });
-        session.lastFrameAt = frames[frames.length - 1].timestamp;
-        const distribution = await this.distributeFrames({ canvas, frames });
-        session.frameCount += frames.length;
-        session.distribution = distribution;
+        // Top the queue back up to the target lookahead duration one tick's worth
+        // at a time instead of waiting and sending a large burst, so delivery stays
+        // paced close to the real playback frame rate.
+        const targetLastFrameAt = this.now() + this.targetQueueMs;
+        const framesNeeded = Math.round(
+          (targetLastFrameAt - session.lastFrameAt) / intervalMs,
+        );
+        if (framesNeeded > 0) {
+          const frames = this.renderFrames({
+            effect,
+            canvas,
+            parameters: session.parameters,
+            startedAt: Date.parse(session.startedAt),
+            firstFrameAt: session.lastFrameAt + intervalMs,
+            count: framesNeeded,
+            frameRate: session.frameRate,
+          });
+          session.lastFrameAt = frames[frames.length - 1].timestamp;
+          const distribution = await this.distributeFrames({
+            canvas,
+            frames,
+          });
+          session.frameCount += frames.length;
+          session.distribution = distribution;
+        }
       } catch (error) {
         session.status = "error";
         session.error = error.message;
@@ -198,30 +213,11 @@ export class PlaybackService {
         });
         return;
       }
-      this.timers.set(
-        session.id,
-        setTimeout(
-          tick,
-          Math.max(
-            0,
-            session.lastFrameAt -
-              this.now() -
-              this.refillLeadFrames * this.frameIntervalMs(session.frameRate),
-          ),
-        ),
-      );
+      this.timers.set(session.id, setTimeout(tick, intervalMs));
     };
     this.timers.set(
       session.id,
-      setTimeout(
-        tick,
-        Math.max(
-          0,
-          session.lastFrameAt -
-            this.now() -
-            this.refillLeadFrames * this.frameIntervalMs(session.frameRate),
-        ),
-      ),
+      setTimeout(tick, this.frameIntervalMs(session.frameRate)),
     );
   }
 }
