@@ -269,10 +269,10 @@ body::after {
 }
 .effect-card {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: 20px 24px minmax(0, 1fr) auto;
+  gap: 9px;
   align-items: center;
-  padding: 16px 20px;
+  padding: 8px 12px;
   text-align: left;
   color: var(--ink);
   border: 0;
@@ -282,6 +282,28 @@ body::after {
 .effect-card:hover,
 .effect-card.selected {
   background: rgba(74, 222, 255, 0.08);
+}
+.effect-card.dragging {
+  opacity: 0.45;
+}
+.effect-reorder-handle {
+  width: 20px;
+  min-width: 20px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  font-size: 16px;
+  line-height: 1;
+}
+.effect-reorder-handle:active {
+  cursor: grabbing;
+}
+.effect-reorder-handle:hover,
+.effect-reorder-handle:focus-visible {
+  color: var(--cyan);
 }
 .effect-card strong,
 .effect-card small {
@@ -293,9 +315,9 @@ body::after {
     sans-serif;
 }
 .effect-card small {
-  margin-top: 5px;
+  margin-top: 2px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
 }
 .effect-card b {
   color: var(--muted);
@@ -304,9 +326,9 @@ body::after {
   text-transform: uppercase;
 }
 .effect-swatch {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
   background: linear-gradient(135deg, var(--cyan), var(--pink));
   box-shadow: 0 0 14px rgba(74, 222, 255, 0.25);
 }
@@ -331,6 +353,14 @@ body::after {
   font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+.friendly-name-control > span {
+  display: flex;
+  gap: 8px;
+}
+.friendly-name-control input {
+  min-width: 0;
+  flex: 1;
 }
 .color-control,
 .number-control {

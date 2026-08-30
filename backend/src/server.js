@@ -21,6 +21,7 @@ import { createCanvasRouter } from "./api/canvases.js";
 import { CanvasService } from "./application/canvas-service.js";
 import { SqliteControllerRepository } from "./infrastructure/persistence/sqlite-controller-repository.js";
 import { SqliteCanvasRepository } from "./infrastructure/persistence/sqlite-canvas-repository.js";
+import { SqlitePlaybackRepository } from "./infrastructure/persistence/sqlite-playback-repository.js";
 import { Metrics } from "./infrastructure/metrics/metrics.js";
 import { createMetricsRouter } from "./api/metrics.js";
 import { createAuthMiddleware } from "./middleware/auth.js";
@@ -44,6 +45,9 @@ export function createApp({
   effectService = new EffectLibraryService({
     repository: new SqliteEffectRepository({
       databasePath: config.effectDatabasePath,
+      playbackRepository: new SqlitePlaybackRepository({
+        databasePath: config.effectDatabasePath,
+      }),
       seedEffects: defaultEffects,
     }),
   }),
@@ -124,7 +128,13 @@ export function createApp({
     createDistributionRouter({ distributionService, canvasService }),
   );
   app.use("/api/effects", createEffectRouter({ effectService }));
-  app.use("/api/canvases", createCanvasRouter({ canvasService }));
+  app.use(
+    "/api/canvases",
+    createCanvasRouter({
+      canvasService,
+      playbackService: app.locals.playbackService,
+    }),
+  );
   app.use(
     "/api/playback",
     createPlaybackRouter({ playbackService: app.locals.playbackService }),
@@ -180,6 +190,9 @@ export function startServer() {
       `LED-Central backend server running on http://${config.host}:${config.port}`,
     );
     console.log(`API available at http://${config.host}:${config.port}/api`);
+    app.locals.playbackService.restore().catch((error) => {
+      console.error("Could not restore saved playback sessions", error);
+    });
   });
   return server;
 }

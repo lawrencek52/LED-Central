@@ -27,6 +27,7 @@ export function createStatusRouter({
           const preview = controller
             ? (gateway.getPreviewStatus?.(controller) ?? {})
             : {};
+          const latestFrame = queue.latestFrame;
           return {
             controllerId: mapping.controllerId,
             controllerName: controller?.name ?? mapping.controllerId,
@@ -40,13 +41,21 @@ export function createStatusRouter({
             drawFps: preview.drawFps ?? 0,
             kibPerSecond: preview.kibPerSecond ?? 0,
             queuedFrames: queue.queuedFrames,
-            preview: preview.frame
+            preview: latestFrame
               ? {
-                  width: preview.width,
-                  height: preview.height,
-                  pixels: preview.frame,
+                  width: mapping.width || canvas.width,
+                  height: mapping.height || 1,
+                  pixels: Buffer.from(latestFrame.pixels.flat()).toString(
+                    "base64",
+                  ),
                 }
-              : null,
+              : preview.frame
+                ? {
+                    width: preview.width,
+                    height: preview.height,
+                    pixels: preview.frame,
+                  }
+                : null,
           };
         });
         return {

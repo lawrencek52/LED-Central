@@ -94,6 +94,11 @@ export const apiClient = {
     }),
   deleteCanvas: (id) => request(`/canvases/${id}`, { method: "DELETE" }),
   listEffects: () => request("/effects"),
+  updateEffect: (id, effect) =>
+    request(`/effects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(effect),
+    }),
   getStatus: () => request("/status"),
   startPlayback: (playback) =>
     request("/playback/start", {

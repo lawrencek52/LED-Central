@@ -48,6 +48,29 @@ test("TCP gateway sends a NightDriverStrip pixel packet", async (t) => {
   gateway.disconnect(controller.id);
 });
 
+test("TCP gateway retains an independent status preview for each strip channel", () => {
+  const gateway = new TcpControllerGateway();
+  gateway.recordSent("controller-1", {
+    timestamp: Date.now() + 1000,
+    channelMask: 1,
+    pixels: [[255, 0, 0]],
+  });
+  gateway.recordSent("controller-1", {
+    timestamp: Date.now() + 1000,
+    channelMask: 2,
+    pixels: [[0, 0, 255]],
+  });
+
+  assert.deepEqual(gateway.getQueueStatus("controller-1", 1).latestFrame, {
+    timestamp: gateway.getQueueStatus("controller-1", 1).latestFrame.timestamp,
+    pixels: [[255, 0, 0]],
+  });
+  assert.deepEqual(gateway.getQueueStatus("controller-1", 2).latestFrame, {
+    timestamp: gateway.getQueueStatus("controller-1", 2).latestFrame.timestamp,
+    pixels: [[0, 0, 255]],
+  });
+});
+
 test("TCP gateway shares one connection for concurrent sends", async (t) => {
   let connectionCount = 0;
   const sockets = new Set();

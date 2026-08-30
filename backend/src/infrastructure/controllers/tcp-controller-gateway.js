@@ -137,10 +137,16 @@ export class TcpControllerGateway {
     const state = this.queueStates.get(controllerId) ?? {
       frames: [],
       sentAt: [],
+      latestFrames: new Map(),
     };
+    state.latestFrames ??= new Map();
     state.frames = state.frames.filter((item) => item.timestamp > now);
     const channelMask = frame.channelMask ?? 1;
     state.frames.push({ timestamp: frame.timestamp, channelMask });
+    state.latestFrames.set(channelMask, {
+      timestamp: frame.timestamp,
+      pixels: frame.pixels,
+    });
     state.sentAt = state.sentAt.filter((item) => item.at >= now - 1000);
     state.sentAt.push({ at: now, channelMask });
     this.queueStates.set(controllerId, state);
@@ -151,6 +157,7 @@ export class TcpControllerGateway {
     const state = this.queueStates.get(controllerId) ?? {
       frames: [],
       sentAt: [],
+      latestFrames: new Map(),
     };
     state.frames = state.frames.filter((item) => item.timestamp > now);
     state.sentAt = state.sentAt.filter((item) => item.at >= now - 1000);
@@ -162,6 +169,7 @@ export class TcpControllerGateway {
         (item) => (item.channelMask & channelMask) !== 0,
       ).length,
       framesPerSecond: sentAt.length,
+      latestFrame: state.latestFrames.get(channelMask) ?? null,
     };
   }
 

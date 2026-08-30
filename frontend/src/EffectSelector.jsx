@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "./api/client";
 
-function EffectSelector({ canvases, effects, onError, lastEvent }) {
+function EffectSelector({
+  canvases,
+  effects,
+  onEffectsChange,
+  onError,
+  lastEvent,
+}) {
   const [canvasId, setCanvasId] = useState(
     () =>
       window.localStorage.getItem("led-central.selectedCanvas") ||
@@ -18,6 +24,8 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
   const [session, setSession] = useState(null);
   const [working, setWorking] = useState(false);
   const [fps, setFps] = useState(20);
+  const [friendlyName, setFriendlyName] = useState("");
+  const [draggedEffectId, setDraggedEffectId] = useState(null);
 
   const effect = effects.find((item) => item.id === effectId);
   const runningSelectedEffect =
@@ -72,7 +80,48 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
   useEffect(() => {
     if (!effect) return;
     setParameters(storedParameters(effect));
+    setFriendlyName(effect.name);
   }, [effect]);
+
+  async function saveFriendlyName() {
+    const name = friendlyName.trim();
+    if (!effect || !name || name === effect.name) return;
+    setWorking(true);
+    onError("");
+    try {
+      const updated = await apiClient.updateEffect(effect.id, { name });
+      onEffectsChange(
+        effects.map((item) => (item.id === updated.id ? updated : item)),
+      );
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function reorderEffects(targetEffectId) {
+    if (!draggedEffectId || draggedEffectId === targetEffectId) return;
+    const next = [...effects];
+    const fromIndex = next.findIndex((item) => item.id === draggedEffectId);
+    const targetIndex = next.findIndex((item) => item.id === targetEffectId);
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(targetIndex, 0, moved);
+    const ordered = next.map((item, sortOrder) => ({ ...item, sortOrder }));
+    onEffectsChange(ordered);
+    setDraggedEffectId(null);
+    onError("");
+    try {
+      await Promise.all(
+        ordered.map(({ id, sortOrder }) =>
+          apiClient.updateEffect(id, { sortOrder }),
+        ),
+      );
+    } catch (requestError) {
+      onEffectsChange(effects);
+      onError(requestError.message);
+    }
+  }
 
   async function startPlayback() {
     if (!canvasId || !effectId) {
@@ -206,19 +255,44 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
           </div>
           <div className="effect-list">
             {effects.map((item) => (
-              <button
-                className={`effect-card ${item.id === effectId ? "selected" : ""}`}
-                type="button"
+              <div
+                className={`effect-card ${item.id === effectId ? "selected" : ""} ${item.id === draggedEffectId ? "dragging" : ""}`}
                 key={item.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => setEffectId(item.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setEffectId(item.id);
+                  }
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => reorderEffects(item.id)}
               >
+                <button
+                  className="effect-reorder-handle"
+                  type="button"
+                  draggable
+                  aria-label={`Reorder ${item.name}`}
+                  title="Drag to reorder"
+                  onClick={(event) => event.stopPropagation()}
+                  onDragStart={(event) => {
+                    event.stopPropagation();
+                    event.dataTransfer.effectAllowed = "move";
+                    setDraggedEffectId(item.id);
+                  }}
+                  onDragEnd={() => setDraggedEffectId(null)}
+                >
+                  &#9776;
+                </button>
                 <span className="effect-swatch" data-effect={item.renderer} />
                 <span>
                   <strong>{item.name}</strong>
                   <small>{item.description}</small>
                 </span>
                 <b>{item.tags?.join(" / ")}</b>
-              </button>
+              </div>
             ))}
           </div>
           {effects.length === 0 && (
@@ -238,6 +312,31 @@ function EffectSelector({ canvases, effects, onError, lastEvent }) {
           </div>
           {effect ? (
             <div className="parameter-form">
+              <label className="friendly-name-control">
+                FRIENDLY NAME
+                <span>
+                  <input
+                    type="text"
+                    value={friendlyName}
+                    onChange={(event) => setFriendlyName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") saveFriendlyName();
+                    }}
+                  />
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={saveFriendlyName}
+                    disabled={
+                      working ||
+                      !friendlyName.trim() ||
+                      friendlyName.trim() === effect.name
+                    }
+                  >
+                    Save
+                  </button>
+                </span>
+              </label>
               {Object.entries(effect.parameters || {}).map(
                 ([name, definition]) => (
                   <label key={name}>

@@ -7,6 +7,7 @@ export class PlaybackService {
     effectService,
     renderService,
     distributionService,
+    playbackRepository = null,
     eventHub = null,
     idFactory = uuidv4,
     now = () => Date.now(),
@@ -17,6 +18,7 @@ export class PlaybackService {
     this.effectService = effectService;
     this.renderService = renderService;
     this.distributionService = distributionService;
+    this.playbackRepository = playbackRepository;
     this.eventHub = eventHub;
     this.idFactory = idFactory;
     this.now = now;
@@ -73,6 +75,12 @@ export class PlaybackService {
     this.scheduleFrames({ session, canvas, effect });
     this.sessions.set(session.id, session);
     this.activeByCanvas.set(canvasId, session);
+    this.playbackRepository?.save({
+      canvasId,
+      effectId,
+      parameters,
+      fps: frameRate,
+    });
     this.eventHub?.publish({
       topic: "playback",
       type: "playback.started",
@@ -91,12 +99,29 @@ export class PlaybackService {
     if (this.activeByCanvas.get(session.canvasId) === session) {
       this.activeByCanvas.delete(session.canvasId);
     }
+    this.playbackRepository?.remove(session.canvasId);
     this.eventHub?.publish({
       topic: "playback",
       type: "playback.stopped",
       payload: session,
     });
     return session;
+  }
+
+  stopByCanvas(canvasId) {
+    const session = this.activeByCanvas.get(canvasId);
+    if (session) this.stop(session.id);
+    else this.playbackRepository?.remove(canvasId);
+  }
+
+  async restore() {
+    for (const intent of this.playbackRepository?.list() ?? []) {
+      try {
+        await this.start(intent);
+      } catch (error) {
+        this.playbackRepository.remove(intent.canvasId);
+      }
+    }
   }
 
   renderFrame({

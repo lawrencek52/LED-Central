@@ -77,6 +77,19 @@ test("renders starfield effect with zero stars as black", () => {
   );
 });
 
+test("renders visible Starfield stars on a one-row canvas", () => {
+  const frame = new EffectRenderService().render({
+    effect: {
+      renderer: "starfield",
+      parameters: { starCount: { default: 100 } },
+    },
+    canvas: { width: 100, height: 1 },
+    parameters: { timeSeconds: 0.5 },
+    timestamp: 500,
+  });
+  assert.ok(frame.pixels.some((pixel) => pixel.some((channel) => channel > 0)));
+});
+
 test("bouncing-balls animates instead of freezing on the first frame", () => {
   const service = new EffectRenderService();
   const canvas = { width: 16, height: 1 };

@@ -475,6 +475,7 @@ function App() {
         <EffectSelector
           canvases={canvases}
           effects={effects}
+          onEffectsChange={setEffects}
           onError={setError}
           lastEvent={lastEvent}
         />

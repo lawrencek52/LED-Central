@@ -207,3 +207,58 @@ test("tops up the controller queue in small paced batches instead of large burst
     for (const session of service.list()) service.stop(session.id);
   }
 });
+
+test("restores saved playback intents after a backend restart", async () => {
+  const intents = [
+    {
+      canvasId: "canvas-1",
+      effectId: "solid",
+      parameters: {},
+      fps: 20,
+    },
+  ];
+  const repository = {
+    list: () => intents,
+    save: (intent) => {
+      intents.splice(0, intents.length, intent);
+    },
+    remove: (canvasId) => {
+      const index = intents.findIndex((intent) => intent.canvasId === canvasId);
+      if (index >= 0) intents.splice(index, 1);
+    },
+  };
+  const service = new PlaybackService({
+    canvasService: {
+      get: (id) =>
+        id === "canvas-1"
+          ? {
+              id,
+              width: 1,
+              height: 1,
+              mappings: [{ controllerId: "deck-1", stripIndex: 0 }],
+            }
+          : null,
+    },
+    effectService: {
+      get: (id) =>
+        id === "solid"
+          ? {
+              id,
+              renderer: "solid",
+              parameters: { color: { default: "#ffffff" } },
+            }
+          : null,
+    },
+    renderService: new EffectRenderService(),
+    distributionService: {
+      distributeCanvasFrame: async () => ({ status: "sent" }),
+    },
+    playbackRepository: repository,
+    idFactory: () => "restored-session",
+  });
+
+  await service.restore();
+  assert.equal(service.list()[0].id, "restored-session");
+  service.stopByCanvas("canvas-1");
+  assert.deepEqual(intents, []);
+});

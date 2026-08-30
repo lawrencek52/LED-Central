@@ -35,7 +35,7 @@ const renderers = {
     const pixels = [];
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
-        const hue = ((x + y) * 255) / Math.max(1, width + height - 2);
+        const hue = (x + y) % 256;
         pixels.push(hsvToRgb(hue, 255, 255));
       }
     }
@@ -78,7 +78,8 @@ const renderers = {
   "color-wave": ({ width, height, parameters, timestamp }) => {
     const speed = Number(parameters.speed) || 0.5;
     const waveFrequency = Number(parameters.waveFrequency) || 10;
-    const phase = ((timestamp / 1000) * speed) % 1;
+    const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    const phase = (elapsedSeconds * speed) % 1;
     const pixels = [];
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
@@ -99,31 +100,28 @@ const renderers = {
     const mirrored = Boolean(parameters.mirrored);
     const totalPixels = width * height;
     const pixels = Array.from({ length: totalPixels }, () => [0, 0, 0]);
-    const seconds = timestamp / 1000;
-    // phase is a pixel offset (not a fraction of the strip), so it must stay in
-    // the same units as `index` before normalizing - otherwise the scroll speed
-    // is divided down by totalPixels twice and the effect never appears to move.
-    const phase = seconds * (scrollSpeed + colorRate * 0.25) * density;
+    const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    const length = mirrored ? Math.floor(totalPixels / 2) : totalPixels;
+    const pixelOffset = (elapsedSeconds * scrollSpeed) % Math.max(1, length);
+    const colorOffset = (elapsedSeconds * colorRate * density) % 1;
+    const colorIncrement = density / Math.max(1, palette.length);
+    const center = totalPixels / 2;
 
-    for (let index = 0; index < totalPixels; index += 1) {
-      if (index % everyNthDot !== 0) continue;
-
-      const travel = (index + phase) / Math.max(1, totalPixels - 1);
-      const palettePhase =
-        (travel +
-          (index % Math.max(1, palette.length)) / Math.max(1, palette.length)) %
-        1;
+    for (let index = 0; index < length; index += everyNthDot) {
+      const pixelIndex = Math.floor(
+        (((index + pixelOffset) % length) + length) % length,
+      );
+      const palettePhase = (colorOffset + index * colorIncrement) % 1;
       const color = interpolatePalette(palette, palettePhase);
       const brightened = color.map((channel) =>
         Math.round(channel * brightness),
       );
 
       for (let offset = 0; offset < dotSize; offset += 1) {
-        const pixelIndex = (index + offset) % totalPixels;
-        pixels[pixelIndex] = brightened;
+        const target = (pixelIndex + offset) % length;
+        pixels[target + (mirrored ? Math.floor(center) : 0)] = brightened;
         if (mirrored) {
-          const mirrorIndex =
-            (totalPixels - 1 - pixelIndex + totalPixels) % totalPixels;
+          const mirrorIndex = Math.floor(center - target);
           pixels[mirrorIndex] = brightened;
         }
       }
@@ -133,23 +131,31 @@ const renderers = {
   starfield: ({ width, height, parameters, timestamp }) => {
     const starCount = Math.max(0, Number(parameters.starCount ?? 0));
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-    // Seed is fixed per star so each one keeps a stable lane/speed, but its
-    // position and twinkle are derived from timestamp so the field actually drifts.
+    const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
     const rng = mulberry32(starCount * 97 + width + height);
-    const seconds = timestamp / 1000;
     for (let i = 0; i < starCount; i += 1) {
-      const startX = rng() * width;
-      const y = Math.floor(rng() * height);
-      const speed = 2 + rng() * 6;
-      const x = Math.floor((startX + seconds * speed) % width);
-      const twinkle = (Math.sin(seconds * 3 + i * 12.9898) + 1) / 2;
-      const base = [255, 255, 255];
-      const accent = [
-        Math.round(twinkle * 255),
-        Math.round(((Math.sin(seconds * 2 + i * 78.233) + 1) / 2) * 255),
-        Math.round(((Math.sin(seconds * 1.3 + i * 37.719) + 1) / 2) * 255),
-      ];
-      pixels[y * width + x] = i % 2 === 0 ? base : accent;
+      const speed = 5 + rng() * 15;
+      const angle = rng() * Math.PI * 2;
+      const x = Math.floor(
+        width / 2 +
+          (Math.cos(angle) *
+            speed *
+            elapsedSeconds *
+            (width / Math.max(1, height))) /
+            2,
+      );
+      const y = Math.floor(
+        height === 1
+          ? 0
+          : height / 2 + Math.sin(angle) * speed * elapsedSeconds,
+      );
+      const brightness = Math.floor(28 + rng() * 227);
+      const color =
+        rng() < 0.5
+          ? saturatedColor(rng)
+          : [brightness, brightness, brightness];
+      if (x >= 0 && x < width && y >= 0 && y < height)
+        pixels[y * width + x] = color;
     }
     return pixels;
   },
@@ -158,16 +164,12 @@ const renderers = {
     const ballSize = Math.max(1, Number(parameters.ballSize ?? 1));
     const mirrored = Boolean(parameters.mirrored);
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-    const phase = timestamp / 1000;
+    const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
 
     for (let ball = 0; ball < ballCount; ball += 1) {
-      const offset = (ball + 1) * 0.9;
-      const movement = (Math.sin(phase * (1.2 + ball * 0.2) + offset) + 1) / 2;
-      const amplitude = Math.max(0, width - ballSize - 1);
-      // Keep the fractional position and blend across neighboring pixels so
-      // motion isn't quantized to whole-pixel jumps between frames.
-      const position = movement * amplitude;
-      const color = paletteFromIndex(ball, ballCount);
+      const dampening = 1 - ball / (ballCount * ballCount);
+      const position = bouncingBallPosition(elapsedSeconds, dampening, width);
+      const color = NDS_BALL_COLORS[ball % NDS_BALL_COLORS.length];
 
       for (let x = 0; x < ballSize; x += 1) {
         plotBlended1D(pixels, width, position + x, color);
@@ -178,7 +180,9 @@ const renderers = {
     }
     return pixels;
   },
-  fireworks: ({ width, height, parameters, timestamp }) => {
+  fireworks: ({ width, height, parameters, timestamp }) =>
+    renderNdsCppFireworks({ width, height, parameters, timestamp }),
+  "fireworks-legacy": ({ width, height, parameters, timestamp }) => {
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const maxSpeed = Number(parameters.maxSpeed ?? 175);
     const particleSize = Math.max(
@@ -1023,6 +1027,107 @@ function starFadeEnvelope(age, preignition, ignition, hold, fadeTime) {
   }
   a -= hold;
   return { brightness: clamp(1 - a / fadeTime, 0, 1), isFlash: false };
+}
+
+function bouncingBallPosition(elapsedSeconds, dampening, width) {
+  const gravity = 0.25;
+  const impactVelocityStart = Math.sqrt(2 * gravity);
+  const velocities = [];
+  let velocity = impactVelocityStart;
+  for (let i = 0; i < 2000; i += 1) {
+    velocities.push(velocity);
+    const nextVelocity = velocity * dampening;
+    if (nextVelocity < impactVelocityStart / 2) break;
+    velocity = nextVelocity;
+  }
+  const physicsPeriod = velocities.reduce(
+    (total, currentVelocity) => total + (2 * currentVelocity) / gravity,
+    0,
+  );
+  let remaining =
+    ((elapsedSeconds % physicsPeriod) + physicsPeriod) % physicsPeriod;
+  for (const currentVelocity of velocities) {
+    const bounceDuration = (2 * currentVelocity) / gravity;
+    if (remaining <= bounceDuration) {
+      const height = Math.max(
+        0,
+        currentVelocity * remaining - 0.5 * gravity * remaining * remaining,
+      );
+      return height * Math.max(0, width - 1);
+    }
+    remaining -= bounceDuration;
+  }
+  return 0;
+}
+
+function saturatedColor(rng) {
+  const color = [
+    Math.floor(rng() * 256),
+    Math.floor(rng() * 256),
+    Math.floor(rng() * 256),
+  ];
+  color[color.indexOf(Math.max(...color))] = 255;
+  return color;
+}
+
+function renderNdsCppFireworks({ width, height, parameters, timestamp }) {
+  const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+  const maxSpeed = Number(parameters.maxSpeed ?? 175);
+  const probability = Math.max(
+    0,
+    Number(parameters.newParticleProbability ?? 1),
+  );
+  const preignition = Math.max(
+    0,
+    Number(parameters.particlePreignitionTime ?? 0),
+  );
+  const ignition = Math.max(0.001, Number(parameters.particleIgnition ?? 0.2));
+  const hold = Math.max(0, Number(parameters.particleHoldTime ?? 0));
+  const fadeTime = Math.max(0.05, Number(parameters.particleFadeTime ?? 2));
+  const particleSize = Math.max(1, Number(parameters.particleSize ?? 1));
+  const lifetime = preignition + ignition + hold + fadeTime;
+  const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+  const spawnRate =
+    Math.max(5, Math.floor((width * height) / 50)) * probability * 0.005 * 20;
+  if (spawnRate === 0) return pixels;
+
+  const interval = 1 / spawnRate;
+  const lastSlot = Math.floor(elapsedSeconds / interval);
+  const firstSlot = lastSlot - Math.ceil(lifetime / interval) - 1;
+  for (let slot = firstSlot; slot <= lastSlot; slot += 1) {
+    const rng = mulberry32(slot * 2654435761 + 47);
+    const bornAt = (slot + rng()) * interval;
+    const age = elapsedSeconds - bornAt;
+    if (age < 0 || age >= lifetime) continue;
+
+    const origin = rng() * width;
+    const color = hsvToRgb(rng() * 255, 255, 255);
+    const count = 10 + Math.floor(rng() * 41);
+    const multiplier = 1 + rng() * 2;
+    const fadeStart = preignition + ignition + hold;
+    for (let particle = 0; particle < count; particle += 1) {
+      const velocity = (rng() * 2 - 1) * maxSpeed * multiplier;
+      // NDSCPP updates velocity as v -= 2*v*dt, whose continuous form is
+      // v(t)=v0*e^(-2t), producing this integrated position.
+      const position = origin + (velocity / 2) * (1 - Math.exp(-2 * age));
+      const fade =
+        age > fadeStart ? clamp((age - fadeStart) / fadeTime, 0, 1) : 0;
+      const shade =
+        age < preignition + ignition
+          ? [255, 255, 255]
+          : color.map((channel) =>
+              Math.round(channel * Math.exp(-age) * (1 - fade)),
+            );
+      const size = Math.max(
+        1,
+        (1 - fade) * ((width * height) / 500) * particleSize,
+      );
+      for (let pixel = 0; pixel < size; pixel += 1) {
+        plotBlended1DAllRows(pixels, width, height, position + pixel, shade);
+      }
+    }
+  }
+  return pixels;
 }
 
 function kelvinToRgb(kelvinInput) {

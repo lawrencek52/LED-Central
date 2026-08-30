@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4 } from "uuid";
 
 export class EffectLibraryError extends Error {
   constructor(message, statusCode = 400, details = undefined) {
@@ -28,12 +28,13 @@ export class EffectLibraryService {
     return this.repository.save({
       id: input.id || this.idFactory(),
       name: input.name,
-      description: input.description || '',
+      description: input.description || "",
       renderer: input.renderer,
       parameters: input.parameters || {},
       tags: input.tags || [],
+      sortOrder: input.sortOrder ?? this.repository.list().length,
       createdAt: timestamp,
-      updatedAt: timestamp
+      updatedAt: timestamp,
     });
   }
 
@@ -44,7 +45,7 @@ export class EffectLibraryService {
       ...existing,
       ...input,
       id,
-      updatedAt: this.now().toISOString()
+      updatedAt: this.now().toISOString(),
     });
   }
 
