@@ -8,12 +8,6 @@ function EffectSelector({
   onError,
   lastEvent,
 }) {
-  const [canvasId, setCanvasId] = useState(
-    () =>
-      window.localStorage.getItem("led-central.selectedCanvas") ||
-      canvases[0]?.id ||
-      "",
-  );
   const [effectId, setEffectId] = useState(
     () =>
       window.localStorage.getItem("led-central.selectedEffect") ||
@@ -21,18 +15,14 @@ function EffectSelector({
       "",
   );
   const [parameters, setParameters] = useState({});
-  const [session, setSession] = useState(null);
+  const [sessionsByCanvas, setSessionsByCanvas] = useState({});
+  const [canvasEffectIds, setCanvasEffectIds] = useState({});
   const [working, setWorking] = useState(false);
   const [fps, setFps] = useState(20);
   const [friendlyName, setFriendlyName] = useState("");
   const [draggedEffectId, setDraggedEffectId] = useState(null);
 
   const effect = effects.find((item) => item.id === effectId);
-  const runningSelectedEffect =
-    session?.status === "playing" &&
-    session.canvasId === canvasId &&
-    session.effectId === effectId;
-
   function defaultParameters(currentEffect) {
     return Object.fromEntries(
       Object.entries(currentEffect?.parameters || {}).map(
@@ -57,20 +47,61 @@ function EffectSelector({
   }
 
   useEffect(() => {
-    if (!canvases.some((canvas) => canvas.id === canvasId) && canvases[0])
-      setCanvasId(canvases[0].id);
-  }, [canvasId, canvases]);
-
-  useEffect(() => {
-    if (canvasId)
-      window.localStorage.setItem("led-central.selectedCanvas", canvasId);
-  }, [canvasId]);
+    let active = true;
+    apiClient
+      .listPlayback()
+      .then((sessions) => {
+        if (!active) return;
+        setSessionsByCanvas(
+          Object.fromEntries(
+            sessions
+              .filter((session) => session.status === "playing")
+              .map((session) => [session.canvasId, session]),
+          ),
+        );
+        setCanvasEffectIds(
+          Object.fromEntries(
+            sessions
+              .filter((session) => session.status === "playing")
+              .map((session) => [session.canvasId, session.effectId]),
+          ),
+        );
+      })
+      .catch((requestError) => active && onError(requestError.message));
+    return () => {
+      active = false;
+    };
+  }, [onError]);
 
   useEffect(() => {
     if (!effectId && effects[0]) setEffectId(effects[0].id);
     if (effectId && !effects.some((item) => item.id === effectId))
       setEffectId(effects[0]?.id || "");
   }, [effectId, effects]);
+
+  useEffect(() => {
+    if (!effectId) return;
+    setCanvasEffectIds((current) => {
+      const next = { ...current };
+      for (const canvas of canvases) {
+        if (!sessionsByCanvas[canvas.id] && next[canvas.id] === undefined) {
+          next[canvas.id] = effectId;
+        }
+      }
+      return next;
+    });
+  }, [canvases, effectId, sessionsByCanvas]);
+
+  function selectLibraryEffect(nextEffectId) {
+    setEffectId(nextEffectId);
+    setCanvasEffectIds((current) => {
+      const next = { ...current };
+      for (const canvas of canvases) {
+        if (!sessionsByCanvas[canvas.id]) next[canvas.id] = nextEffectId;
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (effectId)
@@ -123,9 +154,10 @@ function EffectSelector({
     }
   }
 
-  async function startPlayback() {
-    if (!canvasId || !effectId) {
-      onError("Choose a canvas and effect before starting playback.");
+  async function startPlayback(canvasId) {
+    const selectedEffectId = canvasEffectIds[canvasId] ?? effects[0]?.id;
+    if (!canvasId || !selectedEffectId) {
+      onError("Choose an effect before starting playback.");
       return;
     }
     setWorking(true);
@@ -133,11 +165,16 @@ function EffectSelector({
     try {
       const started = await apiClient.startPlayback({
         canvasId,
-        effectId,
-        parameters,
+        effectId: selectedEffectId,
+        parameters:
+          selectedEffectId === effectId
+            ? parameters
+            : storedParameters(
+                effects.find((item) => item.id === selectedEffectId),
+              ),
         fps,
       });
-      setSession(started);
+      setSessionsByCanvas((current) => ({ ...current, [canvasId]: started }));
     } catch (requestError) {
       onError(requestError.message);
     } finally {
@@ -145,12 +182,17 @@ function EffectSelector({
     }
   }
 
-  async function stopPlayback() {
+  async function stopPlayback(canvasId) {
+    const session = sessionsByCanvas[canvasId];
     if (!session) return;
     setWorking(true);
     try {
       const stopped = await apiClient.stopPlayback(session.id);
-      setSession(stopped);
+      setSessionsByCanvas((current) => {
+        const next = { ...current };
+        delete next[canvasId];
+        return next;
+      });
     } catch (requestError) {
       onError(requestError.message);
     } finally {
@@ -205,43 +247,65 @@ function EffectSelector({
 
   return (
     <section className="effect-workspace">
-      <div className="effect-toolbar">
-        <label>
-          Canvas
-          <select
-            value={canvasId}
-            onChange={(event) => setCanvasId(event.target.value)}
-            disabled={canvases.length === 0}
-          >
-            <option value="">Choose a canvas</option>
-            {canvases.map((canvas) => (
-              <option key={canvas.id} value={canvas.id}>
-                {canvas.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Effect
-          <select
-            value={effectId}
-            onChange={(event) => setEffectId(event.target.value)}
-            disabled={effects.length === 0}
-          >
-            <option value="">Choose an effect</option>
-            {effects.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div
-          className={`playback-state ${session?.status === "playing" ? "playing" : ""}`}
-        >
-          <i />
-          {session?.status === "playing" ? "Playing" : "Ready"}
+      <div className="canvas-playback-panel">
+        <div className="canvas-playback-heading">
+          <div>
+            <p className="eyebrow">Canvas playback</p>
+            <h2>Run effects</h2>
+          </div>
+          <span className="count-badge">{canvases.length} canvases</span>
         </div>
+        <div className="canvas-playback-list">
+          {canvases.map((canvas) => {
+            const selectedEffectId = canvasEffectIds[canvas.id] ?? effects[0]?.id ?? "";
+            const session = sessionsByCanvas[canvas.id];
+            return (
+              <div className="canvas-playback-row" key={canvas.id}>
+                <strong>{canvas.name}</strong>
+                <select
+                  aria-label={`Effect for ${canvas.name}`}
+                  value={selectedEffectId}
+                  disabled={effects.length === 0 || working}
+                  onChange={(event) => {
+                    const nextEffectId = event.target.value;
+                    setCanvasEffectIds((current) => ({
+                      ...current,
+                      [canvas.id]: nextEffectId,
+                    }));
+                    setEffectId(nextEffectId);
+                  }}
+                >
+                  {effects.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => startPlayback(canvas.id)}
+                  disabled={working || !selectedEffectId}
+                >
+                  {session?.status === "playing" ? "Restart" : "Start"}
+                </button>
+                <button
+                  className={`secondary-button ${session?.status === "playing" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => stopPlayback(canvas.id)}
+                  disabled={working || !session || session.status !== "playing"}
+                >
+                  Stop
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {canvases.length === 0 && (
+          <div className="empty-state">
+            Create a canvas to assign an effect.
+          </div>
+        )}
       </div>
 
       <div className="effect-grid">
@@ -260,11 +324,11 @@ function EffectSelector({
                 key={item.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => setEffectId(item.id)}
+                onClick={() => selectLibraryEffect(item.id)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    setEffectId(item.id);
+                    selectLibraryEffect(item.id);
                   }
                 }}
                 onDragOver={(event) => event.preventDefault()}
@@ -456,24 +520,6 @@ function EffectSelector({
               </label>
               <div className="playback-actions">
                 <button
-                  className={`primary-button ${runningSelectedEffect ? "is-inactive" : ""}`}
-                  type="button"
-                  onClick={startPlayback}
-                  disabled={working || !canvasId}
-                >
-                  {working ? "Starting..." : "Run on canvas"}
-                </button>
-                {session?.status === "playing" && (
-                  <button
-                    className={`secondary-button ${runningSelectedEffect ? "is-active" : "is-inactive"}`}
-                    type="button"
-                    onClick={stopPlayback}
-                    disabled={working}
-                  >
-                    Stop
-                  </button>
-                )}
-                <button
                   className="secondary-button"
                   type="button"
                   onClick={resetParameters}
@@ -483,8 +529,8 @@ function EffectSelector({
                 </button>
               </div>
               <p className="form-note">
-                Frames render against the selected canvas and distribute to its
-                mapped strips.
+                Select an effect here to edit its controls, then assign it to a
+                canvas above.
               </p>
             </div>
           ) : (

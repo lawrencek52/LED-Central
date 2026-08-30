@@ -90,6 +90,33 @@ test("renders visible Starfield stars on a one-row canvas", () => {
   assert.ok(frame.pixels.some((pixel) => pixel.some((channel) => channel > 0)));
 });
 
+test("renders parallel mappings as independent strip effects", () => {
+  const service = new EffectRenderService();
+  const canvas = {
+    width: 40,
+    height: 2,
+    mappings: [
+      { controllerId: "deck-a", stripIndex: 0, layout: "parallel", x: 0, y: 0, width: 40, height: 1 },
+      { controllerId: "deck-b", stripIndex: 1, layout: "parallel", x: 0, y: 1, width: 40, height: 1 },
+    ],
+  };
+  const solid = service.render({
+    effect: { renderer: "solid", parameters: { color: { default: "#123456" } } },
+    canvas,
+  });
+  assert.deepEqual(solid.pixels.slice(0, 40), solid.pixels.slice(40));
+
+  const stars = service.render({
+    effect: { renderer: "starfield", parameters: { starCount: { default: 100 } } },
+    canvas,
+    parameters: { timeSeconds: 0.5 },
+    timestamp: 500,
+  });
+  assert.ok(stars.pixels.slice(0, 40).some((pixel) => pixel.some(Boolean)));
+  assert.ok(stars.pixels.slice(40).some((pixel) => pixel.some(Boolean)));
+  assert.notDeepEqual(stars.pixels.slice(0, 40), stars.pixels.slice(40));
+});
+
 test("bouncing-balls animates instead of freezing on the first frame", () => {
   const service = new EffectRenderService();
   const canvas = { width: 16, height: 1 };

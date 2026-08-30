@@ -14,16 +14,91 @@ export class EffectRenderService {
       );
     }
 
+    const resolvedParameters = {
+      ...defaultParameters(effect.parameters),
+      ...parameters,
+    };
     return {
       timestamp,
-      pixels: renderer({
-        width: canvas.width,
-        height: canvas.height,
-        parameters: { ...defaultParameters(effect.parameters), ...parameters },
+      pixels: renderCanvasEffect({
+        renderer,
+        canvas,
+        parameters: resolvedParameters,
         timestamp,
       }),
     };
   }
+}
+
+function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
+  const parallelMappings = (canvas.mappings ?? []).filter(
+    (mapping) => mapping.layout === "parallel",
+  );
+  if (parallelMappings.length === 0) {
+    return renderer({
+      width: canvas.width,
+      height: canvas.height,
+      parameters,
+      timestamp,
+    });
+  }
+
+  const pixels = Array.from(
+    { length: canvas.width * canvas.height },
+    () => [0, 0, 0],
+  );
+  for (const mapping of parallelMappings) {
+    const stripPixels = renderer({
+      width: mapping.width || canvas.width,
+      height: mapping.height || 1,
+      parameters: {
+        ...parameters,
+        randomSeed: stableSeed(`${mapping.controllerId}:${mapping.stripIndex}`),
+      },
+      timestamp,
+    });
+    parallelCoordinates(mapping).forEach(([x, y], index) => {
+      if (x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
+        pixels[y * canvas.width + x] = stripPixels[index] ?? [0, 0, 0];
+      }
+    });
+  }
+  return pixels;
+}
+
+function parallelCoordinates(mapping) {
+  const width = mapping.width;
+  const height = mapping.height || 1;
+  const originX = mapping.x ?? 0;
+  const originY = mapping.y ?? 0;
+  const rotation = ((mapping.rotation ?? 0) % 360 + 360) % 360;
+  const coordinates = [];
+  for (let row = 0; row < height; row += 1) {
+    const currentRow = [];
+    for (let column = 0; column < width; column += 1) {
+      if (rotation === 90) {
+        currentRow.push([originX + height - 1 - row, originY + column]);
+      } else if (rotation === 180) {
+        currentRow.push([originX + width - 1 - column, originY + height - 1 - row]);
+      } else if (rotation === 270) {
+        currentRow.push([originX + row, originY + width - 1 - column]);
+      } else {
+        currentRow.push([originX + column, originY + row]);
+      }
+    }
+    if (mapping.layout === "serpentine" && row % 2 === 1) currentRow.reverse();
+    coordinates.push(...currentRow);
+  }
+  return mapping.reversed ? coordinates.reverse() : coordinates;
+}
+
+function stableSeed(value) {
+  let seed = 2166136261;
+  for (const character of value) {
+    seed ^= character.charCodeAt(0);
+    seed = Math.imul(seed, 16777619);
+  }
+  return seed >>> 0;
 }
 
 const renderers = {
@@ -132,7 +207,8 @@ const renderers = {
     const starCount = Math.max(0, Number(parameters.starCount ?? 0));
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
-    const rng = mulberry32(starCount * 97 + width + height);
+    const randomSeed = Number(parameters.randomSeed ?? 0);
+    const rng = mulberry32(starCount * 97 + width + height + randomSeed);
     for (let i = 0; i < starCount; i += 1) {
       const speed = 5 + rng() * 15;
       const angle = rng() * Math.PI * 2;
@@ -424,7 +500,7 @@ const renderers = {
     const heat = simulateFireHeat({
       cellCount: ledCount,
       elapsedSeconds,
-      seedSalt: 11,
+      seedSalt: 11 + Number(parameters.randomSeed ?? 0),
       step: (h, rng) => {
         for (let i = 0; i < ledCount; i += 1) {
           const coolAmount = Math.floor(rng() * cooling);
@@ -472,7 +548,7 @@ const renderers = {
     const heat = simulateFireHeat({
       cellCount: ledCount,
       elapsedSeconds,
-      seedSalt: 23,
+      seedSalt: 23 + Number(parameters.randomSeed ?? 0),
       step: (h, rng) => {
         for (let i = 0; i < ledCount; i += 1) {
           const cooldown = Math.floor(rng() * cooling);
@@ -539,7 +615,7 @@ const renderers = {
     };
 
     for (let m = 0; m < meteorCount; m += 1) {
-      const rng = mulberry32(m * 733 + 1);
+      const rng = mulberry32(m * 733 + 1 + Number(parameters.randomSeed ?? 0));
       // meteorSpeed is pixels-per-*frame* in the source at its assumed 30fps
       // default, not pixels-per-second, so scale it up to match real motion.
       const speed = (minSpeed + rng() * (maxSpeed - minSpeed)) * 30;
@@ -603,7 +679,9 @@ const renderers = {
     const twinkleCount = Math.max(1, Math.round(totalPixels * 0.03));
     const tick = Math.floor(seconds * 4);
     for (let i = 0; i < twinkleCount; i += 1) {
-      const rng = mulberry32(i * 97531 + tick * 8191 + 3);
+      const rng = mulberry32(
+        i * 97531 + tick * 8191 + 3 + Number(parameters.randomSeed ?? 0),
+      );
       pixels[Math.floor(rng() * totalPixels)] = [255, 255, 255];
     }
     return pixels;
@@ -643,7 +721,9 @@ const renderers = {
     const pixels = Array.from({ length: totalPixels }, () => [0, 0, 0]);
     const tick = Math.floor(timestamp / updateSpeedMs);
     for (let i = 0; i < countToDraw; i += 1) {
-      const rng = mulberry32((tick - i) * 7919 + i * 104729 + 17);
+      const rng = mulberry32(
+        (tick - i) * 7919 + i * 104729 + 17 + Number(parameters.randomSeed ?? 0),
+      );
       const index = Math.floor(rng() * totalPixels);
       const color = TWINKLE_COLORS[Math.floor(rng() * TWINKLE_COLORS.length)];
       const brightness = clamp(1 - i / countToDraw, 0, 1);
@@ -685,7 +765,9 @@ const renderers = {
     for (let i = 0; i < snakeSize; i += 1) {
       pixels[(head - i + totalPixels) % totalPixels] = [0, 200, 40];
     }
-    const foodRng = mulberry32(Math.floor((seconds * speed) / totalPixels) + 5);
+    const foodRng = mulberry32(
+      Math.floor((seconds * speed) / totalPixels) + 5 + Number(parameters.randomSeed ?? 0),
+    );
     pixels[Math.floor(foodRng() * totalPixels)] = [220, 30, 30];
     return pixels;
   },
@@ -719,7 +801,9 @@ const renderers = {
       slot <= currentSlot;
       slot += 1
     ) {
-      const rng = mulberry32(slot * 2654435761 + 29);
+      const rng = mulberry32(
+        slot * 2654435761 + 29 + Number(parameters.randomSeed ?? 0),
+      );
       const birthTime = (slot + rng()) * avgInterval;
       const age = elapsedSeconds - birthTime;
       const index = Math.floor(rng() * totalPixels);
@@ -743,7 +827,7 @@ const renderers = {
     const seconds = timestamp / 1000;
     const count = Math.max(1, Math.round(totalPixels * 0.08 * density));
     for (let i = 0; i < count; i += 1) {
-      const rng = mulberry32(i * 97 + 13);
+      const rng = mulberry32(i * 97 + 13 + Number(parameters.randomSeed ?? 0));
       const cycleLength = 1.5 + rng() * 2;
       const cycleOffset = rng() * cycleLength;
       const phase = ((seconds + cycleOffset) % cycleLength) / cycleLength;
@@ -788,7 +872,9 @@ const renderers = {
       slot <= currentSlot;
       slot += 1
     ) {
-      const rng = mulberry32(slot * 2654435761 + 17);
+      const rng = mulberry32(
+        slot * 2654435761 + 17 + Number(parameters.randomSeed ?? 0),
+      );
       const birthTime = (slot + rng()) * avgInterval;
       const age = elapsedSeconds - birthTime;
       const startIndex = rng() * totalPixels;
@@ -1087,6 +1173,7 @@ function renderNdsCppFireworks({ width, height, parameters, timestamp }) {
   const particleSize = Math.max(1, Number(parameters.particleSize ?? 1));
   const lifetime = preignition + ignition + hold + fadeTime;
   const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+  const randomSeed = Number(parameters.randomSeed ?? 0);
   const spawnRate =
     Math.max(5, Math.floor((width * height) / 50)) * probability * 0.005 * 20;
   if (spawnRate === 0) return pixels;
@@ -1095,7 +1182,7 @@ function renderNdsCppFireworks({ width, height, parameters, timestamp }) {
   const lastSlot = Math.floor(elapsedSeconds / interval);
   const firstSlot = lastSlot - Math.ceil(lifetime / interval) - 1;
   for (let slot = firstSlot; slot <= lastSlot; slot += 1) {
-    const rng = mulberry32(slot * 2654435761 + 47);
+    const rng = mulberry32(slot * 2654435761 + 47 + randomSeed);
     const bornAt = (slot + rng()) * interval;
     const age = elapsedSeconds - bornAt;
     if (age < 0 || age >= lifetime) continue;

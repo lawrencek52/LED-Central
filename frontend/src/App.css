@@ -207,6 +207,46 @@ body::after {
   display: grid;
   gap: 18px;
 }
+.canvas-playback-panel {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.canvas-playback-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.canvas-playback-heading h2 {
+  margin: 0;
+}
+.canvas-playback-list {
+  display: grid;
+  gap: 6px;
+}
+.canvas-playback-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.6fr) minmax(180px, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+.canvas-playback-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-playback-row select {
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid rgba(74, 222, 255, 0.23);
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(4, 10, 22, 0.85);
+}
 .effect-toolbar {
   display: flex;
   gap: 14px;
@@ -305,6 +345,11 @@ body::after {
 .effect-reorder-handle:focus-visible {
   color: var(--cyan);
 }
+.canvas-playback-row .secondary-button.is-active {
+  color: var(--ink);
+  border-color: var(--pink);
+  background: rgba(255, 97, 151, 0.16);
+}
 .effect-card strong,
 .effect-card small {
   display: block;
@@ -361,6 +406,15 @@ body::after {
 .friendly-name-control input {
   min-width: 0;
   flex: 1;
+}
+
+@media (max-width: 640px) {
+  .canvas-playback-row {
+    grid-template-columns: 1fr auto;
+  }
+  .canvas-playback-row select {
+    grid-column: 1 / -1;
+  }
 }
 .color-control,
 .number-control {

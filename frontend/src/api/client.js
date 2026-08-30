@@ -100,6 +100,7 @@ export const apiClient = {
       body: JSON.stringify(effect),
     }),
   getStatus: () => request("/status"),
+  listPlayback: () => request("/playback"),
   startPlayback: (playback) =>
     request("/playback/start", {
       method: "POST",
