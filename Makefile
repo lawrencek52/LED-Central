@@ -28,7 +28,7 @@ setup:
 install:
 	@echo "Installing npm dependencies..."
 	cd backend && npm install
-	cd ../frontend && npm install
+	cd frontend && npm install
 	@echo "✓ Dependencies installed"
 
 # Development servers
