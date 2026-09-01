@@ -166,7 +166,7 @@ const renderers = {
   },
   "palette-scroll": ({ width, height, parameters, timestamp }) => {
     const palette = normalizePalette(parameters.palette);
-    const brightness = clamp(Number(parameters.brightness ?? 1), 0, 1);
+    const brightness = clamp(Number(parameters.brightness ?? 100), 0, 100) / 100;
     const density = Math.max(0.1, Number(parameters.density ?? 1));
     const scrollSpeed = Number(parameters.ledScrollSpeed ?? 0);
     const colorRate = Number(parameters.ledColorPerSecond ?? 0);
@@ -232,27 +232,6 @@ const renderers = {
           : [brightness, brightness, brightness];
       if (x >= 0 && x < width && y >= 0 && y < height)
         pixels[y * width + x] = color;
-    }
-    return pixels;
-  },
-  "bouncing-balls": ({ width, height, parameters, timestamp }) => {
-    const ballCount = Math.max(1, Number(parameters.ballCount ?? 5));
-    const ballSize = Math.max(1, Number(parameters.ballSize ?? 1));
-    const mirrored = Boolean(parameters.mirrored);
-    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-    const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
-
-    for (let ball = 0; ball < ballCount; ball += 1) {
-      const dampening = 1 - ball / (ballCount * ballCount);
-      const position = bouncingBallPosition(elapsedSeconds, dampening, width);
-      const color = NDS_BALL_COLORS[ball % NDS_BALL_COLORS.length];
-
-      for (let x = 0; x < ballSize; x += 1) {
-        plotBlended1D(pixels, width, position + x, color);
-        if (mirrored) {
-          plotBlended1D(pixels, width, width - 1 - (position + x), color);
-        }
-      }
     }
     return pixels;
   },
@@ -470,7 +449,7 @@ const renderers = {
   },
   "warm-glow": ({ width, height, parameters }) => {
     const kelvin = clamp(Number(parameters.kelvin ?? 4000), 1000, 12000);
-    const brightness = clamp(Number(parameters.brightness ?? 1), 0, 1);
+    const brightness = clamp(Number(parameters.brightness ?? 100), 0, 100) / 100;
     const color = kelvinToRgb(kelvin).map((channel) =>
       Math.round(channel * brightness),
     );

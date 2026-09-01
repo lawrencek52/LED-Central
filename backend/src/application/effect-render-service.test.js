@@ -117,25 +117,6 @@ test("renders parallel mappings as independent strip effects", () => {
   assert.notDeepEqual(stars.pixels.slice(0, 40), stars.pixels.slice(40));
 });
 
-test("bouncing-balls animates instead of freezing on the first frame", () => {
-  const service = new EffectRenderService();
-  const canvas = { width: 16, height: 1 };
-  const effect = {
-    renderer: "bouncing-balls",
-    parameters: {
-      ballCount: { default: 4 },
-      ballSize: { default: 2 },
-      mirrored: { default: true },
-      erase: { default: true },
-    },
-  };
-
-  const frameA = service.render({ effect, canvas, timestamp: 0 });
-  const frameB = service.render({ effect, canvas, timestamp: 2000 });
-
-  assert.notDeepEqual(frameA.pixels, frameB.pixels);
-});
-
 test("nds-bouncing-balls animates via kinematics instead of freezing at position 0", () => {
   const service = new EffectRenderService();
   const canvas = { width: 40, height: 1 };

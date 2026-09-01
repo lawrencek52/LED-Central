@@ -3,7 +3,7 @@ Central controller for many NightDriverStrip Controllers
 
 I have multiple NightDriverStrip controllers. Each controller can operate up to four
 independent strips of LEDs. Each controller has a few build-in effects (or patterns)
-for the strips of LEDs. The effects can be individually selected for each strip, or 
+for the strips of LEDs. The effects can be individually selected for each strip, or
 one pattern can be used for all four strips of LEDs. The code for NightDriverStrip is
 in the directory `../NightDriverStrip`
 
@@ -13,7 +13,7 @@ effects on each of the strips of LEDs. However each controller has it's own web 
 and the user must open a separate browser window to each controller to control all
 of the LEDs.
 
-The NightDriverStrip program can also receive effects on a socket at port 49152. The 
+The NightDriverStrip program can also receive effects on a socket at port 49152. The
 effects are received one frame at a time and may be uncompressed, or in a compressed
 format. Received effect frames are timestamped for when they should be displayed, and
 multiple frames may be queued. Each effect frame is transferred to the LED strips at the
@@ -54,3 +54,17 @@ the effects from WLED and FastLED and add them to the repertoire of LED-Central.
 both WLED and FastLED have many more settings than the simpler effects in NDSCPP and
 NightDriverStrip, hence the HTTP server will need to have pages dedicated to configuring the
 more complex effects.
+
+The stock ticker effect requires a local server that collects current stock prices and makes
+them prices available to LED-Central. To setup the server you need:
+```
+pip install flask yfinance
+```
+then start the stock server with
+```
+python scripts/stock_server.py
+```
+you can test that the server is running
+```
+http://<your-raspberry-pi-ip>:5000/api/stocks
+```

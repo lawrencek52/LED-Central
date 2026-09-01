@@ -29,6 +29,8 @@ export class SqliteEffectRepository {
     this.database
       .prepare("UPDATE effects SET sort_order = rowid WHERE sort_order = 0")
       .run();
+    // "bouncing-balls" duplicated "nds-bouncing-balls-a" and was retired.
+    this.remove("bouncing-balls");
     this.seed(seedEffects);
   }
 
@@ -87,11 +89,28 @@ export class SqliteEffectRepository {
   seed(effects) {
     const save = this.database.transaction((items) => {
       for (const [sortOrder, effect] of items.entries()) {
-        if (!this.get(effect.id)) {
+        const existing = this.get(effect.id);
+        if (!existing) {
           this.save({
             ...effect,
             sortOrder,
             createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        } else if (
+          JSON.stringify(existing.parameters) !==
+            JSON.stringify(effect.parameters) ||
+          existing.description !== effect.description ||
+          existing.renderer !== effect.renderer
+        ) {
+          // Refresh built-in definitions (e.g. parameter ranges) while
+          // preserving user customizations like name and sort order.
+          this.save({
+            ...existing,
+            description: effect.description,
+            renderer: effect.renderer,
+            parameters: effect.parameters,
+            tags: effect.tags,
             updatedAt: new Date().toISOString(),
           });
         }

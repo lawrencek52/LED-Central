@@ -187,12 +187,18 @@ function EffectSelector({
     if (!session) return;
     setWorking(true);
     try {
-      const stopped = await apiClient.stopPlayback(session.id);
+      await apiClient.stopPlayback(session.id);
       setSessionsByCanvas((current) => {
         const next = { ...current };
         delete next[canvasId];
         return next;
       });
+      if (effectId) {
+        setCanvasEffectIds((current) => ({
+          ...current,
+          [canvasId]: effectId,
+        }));
+      }
     } catch (requestError) {
       onError(requestError.message);
     } finally {

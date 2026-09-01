@@ -45,9 +45,6 @@ export function createApp({
   effectService = new EffectLibraryService({
     repository: new SqliteEffectRepository({
       databasePath: config.effectDatabasePath,
-      playbackRepository: new SqlitePlaybackRepository({
-        databasePath: config.effectDatabasePath,
-      }),
       seedEffects: defaultEffects,
     }),
   }),
@@ -55,6 +52,9 @@ export function createApp({
     controllerService,
     gateway,
     eventHub,
+  }),
+  playbackRepository = new SqlitePlaybackRepository({
+    databasePath: config.effectDatabasePath,
   }),
 } = {}) {
   const app = express();
@@ -70,6 +70,7 @@ export function createApp({
       renderService: new EffectRenderService(),
       distributionService,
       eventHub,
+      playbackRepository,
     });
   app.locals.metrics = metrics;
 

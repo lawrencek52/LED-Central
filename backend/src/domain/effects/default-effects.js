@@ -50,7 +50,7 @@ export const defaultEffects = [
       everyNthDot: { type: "number", min: 1, max: 10, default: 1 },
       dotSize: { type: "number", min: 1, max: 10, default: 1 },
       rampedColor: { type: "boolean", default: false },
-      brightness: { type: "number", min: 0, max: 1, default: 1 },
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       mirrored: { type: "boolean", default: false },
     },
     tags: ["animated", "palette", "motion"],
@@ -104,20 +104,6 @@ export const defaultEffects = [
       refreshSeconds: { type: "number", min: 15, max: 3600, default: 60 },
     },
     tags: ["ticker", "text", "networked"],
-  },
-  {
-    id: "bouncing-balls",
-    name: "Bouncing Balls",
-    description:
-      "Simulate bouncing colored balls with optional mirrored motion.",
-    renderer: "bouncing-balls",
-    parameters: {
-      ballCount: { type: "number", min: 1, max: 20, default: 5 },
-      ballSize: { type: "number", min: 1, max: 10, default: 1 },
-      mirrored: { type: "boolean", default: true },
-      erase: { type: "boolean", default: true },
-    },
-    tags: ["animated", "motion"],
   },
   {
     id: "fireworks",
@@ -212,7 +198,7 @@ export const defaultEffects = [
     renderer: "warm-glow",
     parameters: {
       kelvin: { type: "number", min: 1000, max: 9000, default: 4000 },
-      brightness: { type: "number", min: 0, max: 1, default: 1 },
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
     },
     tags: ["static", "white", "nds"],
   },
