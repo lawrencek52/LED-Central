@@ -5,6 +5,10 @@ export class EffectRenderError extends Error {
   }
 }
 
+export function isRendererSupported(rendererId) {
+  return Object.prototype.hasOwnProperty.call(renderers, rendererId);
+}
+
 export class EffectRenderService {
   render({ effect, canvas, parameters = {}, timestamp = Date.now() }) {
     const renderer = renderers[effect.renderer];

@@ -181,8 +181,12 @@ body::after {
   gap: 8px;
   margin: 0 0 18px;
   border-bottom: 1px solid rgba(74, 222, 255, 0.18);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 .dashboard-tabs button {
+  flex-shrink: 0;
   border: 1px solid transparent;
   border-bottom: 0;
   border-radius: 10px 10px 0 0;
@@ -408,7 +412,7 @@ body::after {
   flex: 1;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 800px) {
   .canvas-playback-row {
     grid-template-columns: 1fr auto;
   }
@@ -683,6 +687,7 @@ h3 {
 }
 .row-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 .icon-action {
@@ -864,6 +869,15 @@ h3 {
   }
   .strip-fields {
     grid-template-columns: 1fr 1fr;
+  }
+  .strip-mapping {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 10px;
+  }
+  .strip-mapping strong,
+  .strip-mapping > .icon-action.danger {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 }
 .canvas-preview {

@@ -26,6 +26,11 @@ import { Metrics } from "./infrastructure/metrics/metrics.js";
 import { createMetricsRouter } from "./api/metrics.js";
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createStatusRouter } from "./api/status.js";
+import {
+  validateDatabase,
+  formatValidationReport,
+} from "./application/database-validation-service.js";
+import { bringControllersOnline } from "./application/controller-online-service.js";
 
 export function createApp({
   controllerService = new ControllerService({
@@ -62,6 +67,9 @@ export function createApp({
   app.locals.distributionService = distributionService;
   app.locals.effectService = effectService;
   app.locals.canvasService = canvasService;
+  app.locals.controllerService = controllerService;
+  app.locals.gateway = gateway;
+  app.locals.playbackRepository = playbackRepository;
   app.locals.playbackService =
     playbackService ||
     new PlaybackService({
@@ -177,6 +185,42 @@ export function createApp({
 
 const app = createApp();
 
+// Validates persisted data, brings controllers online, then restores any
+// canvases that were playing an effect before the last shutdown.
+async function runStartupSequence(app) {
+  const {
+    effectService,
+    canvasService,
+    controllerService,
+    gateway,
+    playbackRepository,
+    playbackService,
+  } = app.locals;
+
+  const report = validateDatabase({
+    effectService,
+    canvasService,
+    controllerService,
+    playbackRepository,
+  });
+  console.log(formatValidationReport(report));
+
+  const connectivity = await bringControllersOnline({
+    controllerService,
+    gateway,
+  });
+  console.log(
+    `Controllers online: ${connectivity.online.length}, offline: ${connectivity.offline.length}`,
+  );
+  for (const failure of connectivity.offline) {
+    console.warn(
+      `Controller ${failure.controllerId} failed to connect: ${failure.error}`,
+    );
+  }
+
+  await playbackService.restore();
+}
+
 // Start server
 export function startServer() {
   const server = createServer(app);
@@ -191,8 +235,8 @@ export function startServer() {
       `LED-Central backend server running on http://${config.host}:${config.port}`,
     );
     console.log(`API available at http://${config.host}:${config.port}/api`);
-    app.locals.playbackService.restore().catch((error) => {
-      console.error("Could not restore saved playback sessions", error);
+    runStartupSequence(app).catch((error) => {
+      console.error("Startup sequence failed", error);
     });
   });
   return server;
