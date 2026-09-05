@@ -517,7 +517,7 @@ export const defaultEffects = [
     id: "spectrum-bars",
     name: "Spectrum Analyzer",
     description:
-      "Per-band bar graph across the canvas driven by live FFT telemetry - ported from NightDriverStrip's SpectrumAnalyzerEffect.",
+      "Per-band bar graph across the canvas driven by live FFT telemetry, with a peak-hold cap on each bar - ported from NightDriverStrip's SpectrumAnalyzerEffect.",
     renderer: "spectrum-bars",
     parameters: {
       bandCount: { type: "number", min: 4, max: 64, default: 16 },
@@ -544,7 +544,7 @@ export const defaultEffects = [
     id: "spectrum-band",
     name: "Spectrum Band (per-strip)",
     description:
-      "One group of frequency bands per parallel strip mapping - the level bar shows the group's average amplitude (auto-gain-corrected to settle around mid-scale) while a slowly-decaying peak marker tracks the group's loudest band. Assign several parallel strips to build a multi-band VU wall.",
+      "One group of frequency bands per parallel strip mapping - the level bar shows the group's average amplitude while a peak-hold marker tracks the group's loudest band, briefly holding before falling. Assign several parallel strips to build a multi-band VU wall.",
     renderer: "spectrum-band",
     parameters: {},
     tags: ["animated", "audio"],

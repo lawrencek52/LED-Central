@@ -195,17 +195,19 @@ test("vu-meter grows a symmetric bar from vuRatioFade and flashes on a recent be
   assert.deepEqual(loud.pixels[9], [149, 149, 149]);
 });
 
-test("spectrum-bars draws taller bars for louder decayed bands, linear in dB", () => {
+test("spectrum-bars draws taller bars for louder bands, linear in dB", () => {
   const service = new EffectRenderService();
   const canvas = { width: 8, height: 4 };
   // Spread across the dB range (silent, -40dB, -20dB, 0dB) rather than
   // clustered near full scale, where a linear-amplitude spread like
   // [0.5, 1] would compress to nearly the same bar height once mapped
-  // logarithmically.
+  // logarithmically. peaksDecayed matches peaks here so the peak-hold cap
+  // coincides with the bar top instead of adding an extra lit row.
+  const levels = [0, 0.01, 0.1, 1];
   const frame = service.render({
     effect: { renderer: "spectrum-bars", parameters: { bandCount: { default: 4 } } },
     canvas,
-    parameters: { audio: { bandCount: 4, peaksDecayed: [0, 0.01, 0.1, 1] } },
+    parameters: { audio: { bandCount: 4, peaks: levels, peaksDecayed: levels } },
   });
   const litRowsInColumn = (x) =>
     Array.from({ length: 4 }, (_, y) => frame.pixels[y * 8 + x]).filter((pixel) =>
@@ -215,6 +217,21 @@ test("spectrum-bars draws taller bars for louder decayed bands, linear in dB", (
   assert.ok(litRowsInColumn(2) > litRowsInColumn(0));
   assert.ok(litRowsInColumn(4) > litRowsInColumn(2));
   assert.ok(litRowsInColumn(6) > litRowsInColumn(4));
+});
+
+test("spectrum-bars draws a white peak-hold cap above the live bar when it's fallen since the peak", () => {
+  const service = new EffectRenderService();
+  const canvas = { width: 4, height: 4 };
+  const frame = service.render({
+    effect: { renderer: "spectrum-bars", parameters: { bandCount: { default: 1 } } },
+    canvas,
+    // Live level has since dropped to near-silent, but the peak-hold marker
+    // is still up near full scale.
+    parameters: { audio: { bandCount: 1, peaks: [0.001], peaksDecayed: [1] } },
+  });
+  const column = Array.from({ length: 4 }, (_, y) => frame.pixels[y * 4]);
+  assert.deepEqual(column[0], [255, 255, 255]); // top row: the peak-hold cap
+  assert.ok(column.slice(1).every((pixel) => pixel.every((channel) => channel === 0)));
 });
 
 test("musical-fire renders valid pixels with and without a recent beat", () => {

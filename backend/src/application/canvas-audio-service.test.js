@@ -19,15 +19,32 @@ test("reports unavailable when no controller on the canvas has telemetry", () =>
   assert.equal(audio.peaksDecayed.length, 16);
 });
 
-test("resamples differing band counts and averages across a canvas's controllers", () => {
+test("calibrates raw FFT magnitude against referenceMagnitude into a 0..1 amplitude", () => {
+  const telemetry = new Map([
+    ["deck-a", { rawBands: [50], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: 0 }],
+  ]);
+  const service = new CanvasAudioService({
+    telemetrySource: makeTelemetrySource(telemetry),
+    bandCount: 1,
+    referenceMagnitude: 100,
+    now: () => 0,
+  });
+  const canvas = { id: "canvas-1", mappings: [{ controllerId: "deck-a" }] };
+  const audio = service.getCanvasAudio(canvas);
+  assert.equal(audio.available, true);
+  assert.equal(audio.peaks[0], 0.5); // 50 / 100 reference
+});
+
+test("resamples the fixed-16-band raw telemetry and averages across a canvas's controllers", () => {
   let now = 1000;
   const telemetry = new Map([
-    ["deck-a", { peaks: [1, 0], vu: 0.4, vuRatio: 0.2, vuRatioFade: 0.2, beatSeq: 1, bpm: 120, receivedAt: now }],
-    ["deck-b", { peaks: [0, 1, 0, 1], vu: 0.6, vuRatio: 0.4, vuRatioFade: 0.4, beatSeq: 1, bpm: 100, receivedAt: now }],
+    ["deck-a", { rawBands: [1, 0], vu: 0.4, vuRatio: 0.2, vuRatioFade: 0.2, beatSeq: 1, bpm: 120, receivedAt: now }],
+    ["deck-b", { rawBands: [0, 1, 0, 1], vu: 0.6, vuRatio: 0.4, vuRatioFade: 0.4, beatSeq: 1, bpm: 100, receivedAt: now }],
   ]);
   const service = new CanvasAudioService({
     telemetrySource: makeTelemetrySource(telemetry),
     bandCount: 4,
+    referenceMagnitude: 1,
     now: () => now,
   });
   const canvas = {
@@ -43,7 +60,7 @@ test("resamples differing band counts and averages across a canvas's controllers
 test("ignores telemetry from a controller that hasn't reported recently", () => {
   let now = 1000;
   const telemetry = new Map([
-    ["deck-a", { peaks: [1], vu: 1, vuRatio: 1, vuRatioFade: 1, beatSeq: 1, bpm: 120, receivedAt: now - 5000 }],
+    ["deck-a", { rawBands: [1], vu: 1, vuRatio: 1, vuRatioFade: 1, beatSeq: 1, bpm: 120, receivedAt: now - 5000 }],
   ]);
   const service = new CanvasAudioService({
     telemetrySource: makeTelemetrySource(telemetry),
@@ -58,7 +75,7 @@ test("ignores telemetry from a controller that hasn't reported recently", () => 
 test("fires a canvas-level beat when any controller's beatSeq advances, decays otherwise", () => {
   let now = 1000;
   const telemetry = new Map([
-    ["deck-a", { peaks: [0], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 1, bpm: 120, beatConfidence: 0.9, receivedAt: now }],
+    ["deck-a", { rawBands: [0], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 1, bpm: 120, beatConfidence: 0.9, receivedAt: now }],
   ]);
   const service = new CanvasAudioService({
     telemetrySource: makeTelemetrySource(telemetry),
@@ -82,49 +99,96 @@ test("fires a canvas-level beat when any controller's beatSeq advances, decays o
   assert.equal(third.lastBeatAt, 2000);
 });
 
-test("decays per-band peaks over elapsed time and raises them to new highs", () => {
+test("the bar (peaks) reads live every tick, with no attack/release damping", () => {
   let now = 0;
   const telemetry = new Map([
-    ["deck-a", { peaks: [1], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: now }],
+    ["deck-a", { rawBands: [1], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: now }],
   ]);
   const service = new CanvasAudioService({
     telemetrySource: makeTelemetrySource(telemetry),
     bandCount: 1,
-    decayRatePerSecond: 1,
-    agcAttackRatePerSecond: 0,
-    agcReleaseRatePerSecond: 0, // isolate decay from the AGC's gain adjustments
+    referenceMagnitude: 1,
+    now: () => now,
+  });
+  const canvas = { id: "canvas-1", mappings: [{ controllerId: "deck-a" }] };
+
+  assert.equal(service.getCanvasAudio(canvas).peaks[0], 1);
+
+  telemetry.get("deck-a").rawBands = [0.2];
+  now = 10; // an instant later - the bar should already reflect the new value
+  telemetry.get("deck-a").receivedAt = now;
+  assert.equal(service.getCanvasAudio(canvas).peaks[0], 0.2);
+});
+
+test("peak-hold jumps instantly to a new peak, holds, then falls after the hold expires", () => {
+  let now = 0;
+  const telemetry = new Map([
+    ["deck-a", { rawBands: [1], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: now }],
+  ]);
+  const service = new CanvasAudioService({
+    telemetrySource: makeTelemetrySource(telemetry),
+    bandCount: 1,
+    referenceMagnitude: 1,
+    peakHoldMs: 500,
+    peakDecayPerSecond: 1,
     now: () => now,
   });
   const canvas = { id: "canvas-1", mappings: [{ controllerId: "deck-a" }] };
 
   const peaked = service.getCanvasAudio(canvas);
-  assert.equal(peaked.peaksDecayed[0], 1);
+  assert.equal(peaked.peaksDecayed[0], 1); // instant rise
 
-  telemetry.get("deck-a").peaks = [0];
-  now = 500; // 0.5s elapsed at a decay rate of 1/sec -> peak drops by 0.5
+  telemetry.get("deck-a").rawBands = [0];
+  now = 300; // still within the 500ms hold window
+  telemetry.get("deck-a").receivedAt = now;
+  const held = service.getCanvasAudio(canvas);
+  assert.equal(held.peaksDecayed[0], 1, "peak should still be held");
+  assert.equal(held.peaks[0], 0, "the live bar should already reflect silence though");
+
+  now = 1300; // 800ms past the hold window -> decaying at 1/sec for 800ms
   telemetry.get("deck-a").receivedAt = now;
   const decaying = service.getCanvasAudio(canvas);
-  assert.equal(decaying.peaksDecayed[0], 0.5);
+  assert.ok(decaying.peaksDecayed[0] < 1 && decaying.peaksDecayed[0] > 0, "peak should be falling");
 
-  telemetry.get("deck-a").peaks = [0.9];
-  now = 600; // a fresh high raises the decayed value back up immediately
+  now = 3000; // long past fully decayed
   telemetry.get("deck-a").receivedAt = now;
-  const raised = service.getCanvasAudio(canvas);
-  assert.equal(raised.peaksDecayed[0], 0.9);
+  const fallen = service.getCanvasAudio(canvas);
+  assert.equal(fallen.peaksDecayed[0], 0);
 });
 
-test("AGC slowly raises gain toward the midpoint of the dB display range instead of jumping there", () => {
+test("AGC is disabled by default - a loud signal isn't gain-adjusted toward the target", () => {
+  let now = 0;
+  const telemetry = new Map([
+    ["deck-a", { rawBands: [1], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: now }],
+  ]);
+  const service = new CanvasAudioService({
+    telemetrySource: makeTelemetrySource(telemetry),
+    bandCount: 1,
+    referenceMagnitude: 1,
+    now: () => now,
+  });
+  const canvas = { id: "canvas-1", mappings: [{ controllerId: "deck-a" }] };
+
+  now = 60000; // comfortably more than the AGC's ~30s time constant, if it were enabled
+  telemetry.get("deck-a").receivedAt = now;
+  const audio = service.getCanvasAudio(canvas);
+  assert.equal(audio.peaks[0], 1, "gain should stay fixed at 1x with AGC off");
+});
+
+test("AGC, when enabled, slowly raises gain toward the midpoint of the dB display range", () => {
   // Target is ~50% *up the 64dB display range* (-32dB, ~0.0251 linear
   // amplitude) - not 50% raw linear amplitude - so it stays consistent with
   // the renderers' own dB-linear LED mapping. 0.01 is below that target, so
   // gain should climb (slowly - ~30s time constant) to bring it up to ~0.0251.
   let now = 0;
   const telemetry = new Map([
-    ["deck-a", { peaks: [0.01, 0.01], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: now }],
+    ["deck-a", { rawBands: [0.01, 0.01], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: now }],
   ]);
   const service = new CanvasAudioService({
     telemetrySource: makeTelemetrySource(telemetry),
     bandCount: 2,
+    referenceMagnitude: 1,
+    agcEnabled: true,
     now: () => now,
   });
   const canvas = { id: "canvas-1", mappings: [{ controllerId: "deck-a" }] };
@@ -147,7 +211,7 @@ test("AGC slowly raises gain toward the midpoint of the dB display range instead
   );
 });
 
-test("AGC ducks gain quickly (fast attack) when a loud transient hits, instead of clipping at max", () => {
+test("AGC, when enabled, ducks gain quickly (fast attack) on a loud transient instead of clipping at max", () => {
   // Simulates gain having drifted up to its ceiling (8x) during silence, then
   // a loud clap (raw amplitude 1.0, i.e. full scale) arriving. A slow
   // attack would keep 1.0 * 8 clamped at max brightness for as long as it
@@ -157,16 +221,19 @@ test("AGC ducks gain quickly (fast attack) when a loud transient hits, instead o
   // should duck gain back down within a couple hundred milliseconds instead.
   let now = 0;
   const telemetry = new Map([
-    ["deck-a", { peaks: [1, 1], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: now }],
+    ["deck-a", { rawBands: [1, 1], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: now }],
   ]);
   const service = new CanvasAudioService({
     telemetrySource: makeTelemetrySource(telemetry),
     bandCount: 2,
+    referenceMagnitude: 1,
+    agcEnabled: true,
     now: () => now,
   });
   const canvas = { id: "canvas-1", mappings: [{ controllerId: "deck-a" }] };
   service.canvasStates.set("canvas-1", {
-    peaksDecayed: [0, 0],
+    peakHold: [0, 0],
+    peakHeldAt: [-Infinity, -Infinity],
     gain: 8, // as if it had drifted to the ceiling during a preceding silence
     lastUpdateAt: 0,
     lastBeatSeqByController: new Map(),

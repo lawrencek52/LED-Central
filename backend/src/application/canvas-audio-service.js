@@ -1,39 +1,74 @@
-const DEFAULT_BAND_COUNT = 16;
-const DEFAULT_DECAY_PER_SECOND = 1 / 3; // full-scale peak falls back to the live level in ~3s
+const DEFAULT_BAND_COUNT = 16; // matches the firmware's fixed RAW_BAND_COUNT (Mel-spaced)
+
 // Matches the mics' ~64dB signal-to-noise ratio - must stay in sync with
 // effect-render-service.js's own AUDIO_DYNAMIC_RANGE_DB, which the renderers
 // use to map amplitude onto LEDs linearly in dB across that same range.
 const AUDIO_DYNAMIC_RANGE_DB = 64;
+
+// Calibrates `rawBands` (unbounded RMS FFT magnitude, see below) to a
+// 0..1-ish linear amplitude where 1.0 == 0dB/full-scale. Derived from the
+// firmware's own sampling math (soundanalyzer.cpp): int16 samples (max
+// 32767) over a MAX_SAMPLES=256 Hann-windowed FFT give a single dominant
+// bin a magnitude of roughly amplitude * MAX_SAMPLES/2 * 0.5 (Hann coherent
+// gain) = 32767 * 64 ~= 2.1M for a full-scale tone; a raw band's RMS over
+// several bins reads lower than that for a narrowband signal. This is a
+// starting point, not a lab-calibrated constant - tune it against the real
+// display while testing, which is also why it's a plain constructor
+// parameter rather than buried in the math below.
+const DEFAULT_REFERENCE_MAGNITUDE = 2_000_000;
+
+// Peak-hold marker: jumps instantly to a new peak, holds there, then falls
+// linearly ("gravity fall") rather than exponentially - matching how
+// hardware LED peak-hold meters visibly step down after the hold expires.
+const DEFAULT_PEAK_HOLD_MS = 1000;
+const DEFAULT_PEAK_DECAY_PER_SECOND = 1.2;
+
+// Our own AGC (fast-attack/slow-release, like a broadcast compressor),
+// off by default: with the mic's ~64dB useful range spread across 80-200+
+// LEDs, a fixed calibration (DEFAULT_REFERENCE_MAGNITUDE) may already give
+// good-looking results without adaptive gain. The hooks stay wired up
+// (agcEnabled: true) in case testing shows otherwise.
+const DEFAULT_AGC_ENABLED = false;
 const DEFAULT_AGC_TARGET_FRACTION = 0.5; // aim for the middle of the dB range, not 50% linear amplitude
-// Asymmetric like a broadcast compressor: gain must duck down fast when a
-// loud transient (e.g. a clap) hits, or it stays high long enough to clip
-// the transient's own decay at full brightness for a second or more - but
-// should climb back up slowly during quiet so it settles on the track's
-// overall loudness instead of pumping with every beat.
 const DEFAULT_AGC_ATTACK_PER_SECOND = 5; // fast: ~0.2s to duck gain down
 const DEFAULT_AGC_RELEASE_PER_SECOND = 1 / 30; // slow: ~30s to climb back up
 const DEFAULT_AGC_MIN_GAIN = 0.25;
 const DEFAULT_AGC_MAX_GAIN = 8;
+
 const DEFAULT_UPDATE_RATE_HZ = 20;
 const STALE_TELEMETRY_MS = 2000;
 const STALE_BEAT_SOURCE_MS = 4000;
 
 // Aggregates per-controller audio telemetry (from `telemetrySource.getAudioTelemetry`)
-// into one canvas-level snapshot, averaging across every controller a canvas straddles
-// and maintaining a slowly-decaying per-band peak-hold, plus a fast-attack/slow-release
-// automatic-gain control (like a broadcast compressor) so bars settle around the target
-// level instead of sitting dark during quiet passages, while still ducking down quickly
-// enough that a loud transient doesn't clip at full brightness for a second or more.
-// `telemetrySource` only needs to expose
-// the TcpControllerGateway, but keeping it as a named dependency (rather than depending
-// on the gateway class directly) leaves room for a future in-app music-playback source
-// to stand in for it.
+// into one canvas-level snapshot for driving multi-band LED VU meters, averaging
+// across every controller a canvas straddles.
+//
+// The source data is `rawBands`: unprocessed RMS FFT magnitude in a fixed 16
+// Mel-spaced bands (grouped the way the ear groups frequencies), sent alongside
+// the firmware's own on-device-effects `peaks` field but carrying none of that
+// field's noise-floor subtraction, AGC, or decay smoothing - by design, so this
+// service owns the entire metering pipeline instead of layering on top of the
+// firmware's own visual tuning. That pipeline is:
+//   1. Calibrate: divide by `referenceMagnitude` to get a 0..1-ish linear amplitude.
+//   2. Optional AGC (see `agcEnabled` above).
+//   3. Peak-hold: instant rise, hold, then a linear gravity-fall - like a
+//      hardware peak-hold LED.
+// Exposed as `peaks` (this tick's instantaneous level - the bar itself reads
+// live, un-damped, the way a spectrum display should) and `peaksDecayed` (the
+// peak-hold marker), the same field names/shapes the renderers already expect.
+//
+// `telemetrySource` only needs to expose getAudioTelemetry/getAudioTelemetryRate
+// (the TcpControllerGateway satisfies this), but keeping it as a named dependency
+// leaves room for a future in-app music-playback source to stand in for it.
 export class CanvasAudioService {
   constructor({
     telemetrySource,
     bandCount = DEFAULT_BAND_COUNT,
-    decayRatePerSecond = DEFAULT_DECAY_PER_SECOND,
+    referenceMagnitude = DEFAULT_REFERENCE_MAGNITUDE,
     dynamicRangeDb = AUDIO_DYNAMIC_RANGE_DB,
+    peakHoldMs = DEFAULT_PEAK_HOLD_MS,
+    peakDecayPerSecond = DEFAULT_PEAK_DECAY_PER_SECOND,
+    agcEnabled = DEFAULT_AGC_ENABLED,
     agcTargetFraction = DEFAULT_AGC_TARGET_FRACTION,
     agcAttackRatePerSecond = DEFAULT_AGC_ATTACK_PER_SECOND,
     agcReleaseRatePerSecond = DEFAULT_AGC_RELEASE_PER_SECOND,
@@ -44,8 +79,11 @@ export class CanvasAudioService {
   }) {
     this.telemetrySource = telemetrySource;
     this.bandCount = bandCount;
-    this.decayRatePerSecond = decayRatePerSecond;
+    this.referenceMagnitude = referenceMagnitude;
     this.dynamicRangeDb = dynamicRangeDb;
+    this.peakHoldMs = peakHoldMs;
+    this.peakDecayPerSecond = peakDecayPerSecond;
+    this.agcEnabled = agcEnabled;
     // The linear-amplitude equivalent of sitting at `agcTargetFraction` of the
     // way up the dB display range (e.g. 0.5 -> -32dB -> ~0.0251 amplitude),
     // not a raw linear target - so "the AGC aims for bars at ~50%" stays true
@@ -72,17 +110,24 @@ export class CanvasAudioService {
 
     this.pruneBeatSources(state, controllerIds, now);
 
-    if (entries.length === 0) {
-      this.decay(state, elapsedSeconds, null);
-      state.lastUpdateAt = now;
+    const available = entries.length > 0;
+    const calibrated = available
+      ? averageArrays(
+          entries.map(([, telemetry]) => resample(telemetry.rawBands ?? [], this.bandCount)),
+        ).map((magnitude) => magnitude / this.referenceMagnitude)
+      : new Array(this.bandCount).fill(0);
+
+    if (this.agcEnabled && available) {
+      this.updateGain(state, calibrated, elapsedSeconds);
+    }
+    const peaks = calibrated.map((value) => clamp(value * state.gain, 0, 1));
+
+    this.updatePeakHold(state, peaks, now);
+    state.lastUpdateAt = now;
+
+    if (!available) {
       return this.snapshot(state, { available: false });
     }
-
-    const rawPeaks = averageArrays(
-      entries.map(([, telemetry]) => resample(telemetry.peaks ?? [], this.bandCount)),
-    );
-    this.updateGain(state, rawPeaks, elapsedSeconds);
-    const peaks = rawPeaks.map((value) => clamp(value * state.gain, 0, 1));
 
     const vu = average(entries.map(([, telemetry]) => Number(telemetry.vu ?? 0)));
     const vuRatio = average(entries.map(([, telemetry]) => Number(telemetry.vuRatio ?? 0)));
@@ -116,9 +161,6 @@ export class CanvasAudioService {
       ? average(firedBpm)
       : average(entries.map(([, telemetry]) => Number(telemetry.bpm ?? 0)));
 
-    this.decay(state, elapsedSeconds, peaks);
-    state.lastUpdateAt = now;
-
     return this.snapshot(state, {
       available: true,
       peaks,
@@ -149,7 +191,8 @@ export class CanvasAudioService {
     let state = this.canvasStates.get(canvasId);
     if (!state) {
       state = {
-        peaksDecayed: new Array(this.bandCount).fill(0),
+        peakHold: new Array(this.bandCount).fill(0),
+        peakHeldAt: new Array(this.bandCount).fill(-Infinity),
         gain: 1,
         lastUpdateAt: this.now(),
         lastBeatSeqByController: new Map(),
@@ -175,9 +218,10 @@ export class CanvasAudioService {
   // using a fast attack when gain needs to fall (a loud transient arrived -
   // duck quickly so it doesn't clip at full brightness for a second or more)
   // and a slow release when gain needs to rise (settle on overall loudness
-  // during quiet passages rather than pumping with every beat).
-  updateGain(state, peaks, elapsedSeconds) {
-    const meanLevel = average(peaks);
+  // during quiet passages rather than pumping with every beat). Only called
+  // when `agcEnabled`.
+  updateGain(state, calibrated, elapsedSeconds) {
+    const meanLevel = average(calibrated);
     const desiredGain = clamp(
       this.agcTargetAmplitude / Math.max(meanLevel, 1e-6),
       this.agcMinGain,
@@ -189,10 +233,30 @@ export class CanvasAudioService {
     state.gain += (desiredGain - state.gain) * adaptAmount;
   }
 
-  decay(state, elapsedSeconds, peaks) {
+  // Advances the peak-hold marker toward this tick's per-band level: an
+  // instant rise on a new peak, then it holds at that level for `peakHoldMs`
+  // before falling linearly ("gravity fall") at `peakDecayPerSecond` - the
+  // classic hardware peak-hold LED behavior, unlike `peaks` itself (the bar),
+  // which reads live every tick with no damping.
+  //
+  // Decay only counts the portion of [state.lastUpdateAt, now] that falls
+  // after the hold deadline (peakHeldAt + peakHoldMs) - using the full
+  // inter-tick gap would over-decay whenever a tick straddles the moment the
+  // hold expires (most visible with sparse ticks, but a real source of drift
+  // at any tick rate).
+  updatePeakHold(state, peaks, now) {
     for (let i = 0; i < this.bandCount; i += 1) {
-      const decayed = Math.max(0, state.peaksDecayed[i] - elapsedSeconds * this.decayRatePerSecond);
-      state.peaksDecayed[i] = peaks ? Math.max(decayed, peaks[i] ?? 0) : decayed;
+      const level = peaks[i] ?? 0;
+      if (level >= state.peakHold[i]) {
+        state.peakHold[i] = level;
+        state.peakHeldAt[i] = now;
+        continue;
+      }
+      const holdDeadline = state.peakHeldAt[i] + this.peakHoldMs;
+      const decaySeconds = Math.max(0, (now - Math.max(state.lastUpdateAt, holdDeadline)) / 1000);
+      if (decaySeconds > 0) {
+        state.peakHold[i] = Math.max(0, state.peakHold[i] - decaySeconds * this.peakDecayPerSecond);
+      }
     }
   }
 
@@ -200,7 +264,7 @@ export class CanvasAudioService {
     return {
       bandCount: this.bandCount,
       peaks: [],
-      peaksDecayed: [...state.peaksDecayed],
+      peaksDecayed: [...state.peakHold],
       vu: 0,
       vuRatio: 0,
       vuRatioFade: 0,
@@ -214,17 +278,17 @@ export class CanvasAudioService {
   }
 }
 
-function resample(peaks, targetCount) {
-  if (peaks.length === 0) return new Array(targetCount).fill(0);
-  if (peaks.length === targetCount) return peaks.map(Number);
+function resample(values, targetCount) {
+  if (values.length === 0) return new Array(targetCount).fill(0);
+  if (values.length === targetCount) return values.map(Number);
   const result = new Array(targetCount);
   for (let i = 0; i < targetCount; i += 1) {
-    const position = (i / Math.max(1, targetCount - 1)) * (peaks.length - 1);
+    const position = (i / Math.max(1, targetCount - 1)) * (values.length - 1);
     const lowerIndex = Math.floor(position);
-    const upperIndex = Math.min(peaks.length - 1, lowerIndex + 1);
+    const upperIndex = Math.min(values.length - 1, lowerIndex + 1);
     const fraction = position - lowerIndex;
-    const lower = Number(peaks[lowerIndex] ?? 0);
-    const upper = Number(peaks[upperIndex] ?? 0);
+    const lower = Number(values[lowerIndex] ?? 0);
+    const upper = Number(values[upperIndex] ?? 0);
     result[i] = lower + (upper - lower) * fraction;
   }
   return result;

@@ -953,26 +953,34 @@ const renderers = {
   },
   // Ported from NightDriverStrip's SpectrumAnalyzerEffect/SpectrumBarEffect
   // (spectrumeffects.h): one bar per frequency band across a single strip or
-  // matrix row, height driven by the slowly-decaying per-band peak.
+  // matrix row. `peaks` (live, undamped) drives the bar itself so it tracks
+  // the music in real time; `peaksDecayed` (CanvasAudioService's peak-hold
+  // marker - instant rise, hold, then a gravity-fall) draws a single bright
+  // cap pixel above it, like a hardware peak-hold LED spectrum analyzer.
   "spectrum-bars": ({ width, height, parameters }) => {
     const audio = parameters.audio;
     const bandCount = Math.max(
       1,
       Math.round(Number(parameters.bandCount ?? audio?.bandCount ?? 16)),
     );
+    const peaks = audio?.peaks ?? [];
     const peaksDecayed = audio?.peaksDecayed ?? [];
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const segmentWidth = width / bandCount;
     for (let band = 0; band < bandCount; band += 1) {
-      const rawValue = clamp(Number(peaksDecayed[band] ?? 0), 0, 1);
-      const value = amplitudeToDbFraction(rawValue);
-      const barHeight = Math.round(value * height);
+      const level = amplitudeToDbFraction(clamp(Number(peaks[band] ?? 0), 0, 1));
+      const barHeight = Math.round(level * height);
+      const peak = amplitudeToDbFraction(clamp(Number(peaksDecayed[band] ?? 0), 0, 1));
+      const peakRow = Math.round(peak * height) - 1;
       const xStart = Math.floor(band * segmentWidth);
       const xEnd = Math.max(xStart + 1, Math.floor((band + 1) * segmentWidth));
       for (let x = xStart; x < xEnd && x < width; x += 1) {
         for (let row = 0; row < barHeight; row += 1) {
           const heat = Math.round((row / Math.max(1, height - 1)) * 255);
           pixels[(height - 1 - row) * width + x] = heatToFireColor(heat);
+        }
+        if (peakRow >= barHeight && peakRow < height) {
+          pixels[(height - 1 - peakRow) * width + x] = [255, 255, 255];
         }
       }
     }
