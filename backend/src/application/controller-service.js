@@ -25,7 +25,9 @@ export class ControllerService {
       connected: false,
       strips,
       ledCounts,
-      lastSeen: timestamp
+      lastSeen: timestamp,
+      audioAvailable: 'unknown',
+      audioCheckedAt: null
     };
 
     return this.repository.save(controller);
@@ -55,6 +57,16 @@ export class ControllerService {
       ...controller,
       connected,
       lastSeen: connected ? this.now().toISOString() : controller.lastSeen
+    });
+  }
+
+  setAudioAvailability(id, { available, checkedAt = this.now().toISOString() } = {}) {
+    const controller = this.get(id);
+    if (!controller) return null;
+    return this.repository.save({
+      ...controller,
+      audioAvailable: available,
+      audioCheckedAt: checkedAt
     });
   }
 

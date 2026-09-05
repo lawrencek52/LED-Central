@@ -17,6 +17,7 @@ import { createEffectRouter } from "./api/effects.js";
 import { createPlaybackRouter } from "./api/playback.js";
 import { EffectRenderService } from "./application/effect-render-service.js";
 import { PlaybackService } from "./application/playback-service.js";
+import { CanvasAudioService } from "./application/canvas-audio-service.js";
 import { createCanvasRouter } from "./api/canvases.js";
 import { CanvasService } from "./application/canvas-service.js";
 import { SqliteControllerRepository } from "./infrastructure/persistence/sqlite-controller-repository.js";
@@ -61,6 +62,7 @@ export function createApp({
   playbackRepository = new SqlitePlaybackRepository({
     databasePath: config.effectDatabasePath,
   }),
+  audioService = new CanvasAudioService({ telemetrySource: gateway }),
 } = {}) {
   const app = express();
   app.locals.eventHub = eventHub;
@@ -70,6 +72,7 @@ export function createApp({
   app.locals.controllerService = controllerService;
   app.locals.gateway = gateway;
   app.locals.playbackRepository = playbackRepository;
+  app.locals.audioService = audioService;
   app.locals.playbackService =
     playbackService ||
     new PlaybackService({
@@ -79,6 +82,7 @@ export function createApp({
       distributionService,
       eventHub,
       playbackRepository,
+      audioService,
     });
   app.locals.metrics = metrics;
 
@@ -142,6 +146,7 @@ export function createApp({
     createCanvasRouter({
       canvasService,
       playbackService: app.locals.playbackService,
+      audioService,
     }),
   );
   app.use(
@@ -217,6 +222,16 @@ async function runStartupSequence(app) {
       `Controller ${failure.controllerId} failed to connect: ${failure.error}`,
     );
   }
+
+  await Promise.allSettled(
+    controllerService.list().map((controller) =>
+      gateway
+        .probeAudioSupport(controller)
+        .then((available) =>
+          controllerService.setAudioAvailability(controller.id, { available }),
+        ),
+    ),
+  );
 
   await playbackService.restore();
 }

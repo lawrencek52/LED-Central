@@ -95,6 +95,7 @@ export function createControllerRouter({ controllerService, gateway }) {
         controllerService.list().map(async (controller) => ({
           ...controller,
           connected: (await gateway.getStatus(controller.id)).connected,
+          audioAvailable: gateway.getAudioStatus(controller.id).available,
         })),
       );
       res.json(controllers);
@@ -105,7 +106,14 @@ export function createControllerRouter({ controllerService, gateway }) {
 
   router.post("/", (req, res) => {
     const payload = validateControllerPayload(req.body);
-    res.status(201).json(controllerService.create(payload));
+    const controller = controllerService.create(payload);
+    gateway
+      .probeAudioSupport(controller)
+      .then((available) =>
+        controllerService.setAudioAvailability(controller.id, { available }),
+      )
+      .catch(() => {});
+    res.status(201).json(controller);
   });
 
   router.get("/:id", (req, res, next) => {

@@ -263,15 +263,34 @@ function EffectSelector({
         </div>
         <div className="canvas-playback-list">
           {canvases.map((canvas) => {
-            const selectedEffectId = canvasEffectIds[canvas.id] ?? effects[0]?.id ?? "";
+            const hasAudioEffects = effects.some((item) => item.tags?.includes("audio"));
+            const availableEffects = canvas.audioAvailable
+              ? effects
+              : effects.filter((item) => !item.tags?.includes("audio"));
+            const requestedEffectId = canvasEffectIds[canvas.id] ?? effects[0]?.id ?? "";
+            const selectedEffectId = availableEffects.some(
+              (item) => item.id === requestedEffectId,
+            )
+              ? requestedEffectId
+              : (availableEffects[0]?.id ?? "");
             const session = sessionsByCanvas[canvas.id];
             return (
               <div className="canvas-playback-row" key={canvas.id}>
-                <strong>{canvas.name}</strong>
+                <div className="canvas-playback-name">
+                  <strong>{canvas.name}</strong>
+                  {hasAudioEffects && !canvas.audioAvailable && (
+                    <span
+                      className="badge-muted"
+                      title="No connected controller on this canvas currently advertises audio telemetry support"
+                    >
+                      audio effects unavailable
+                    </span>
+                  )}
+                </div>
                 <select
                   aria-label={`Effect for ${canvas.name}`}
                   value={selectedEffectId}
-                  disabled={effects.length === 0 || working}
+                  disabled={availableEffects.length === 0 || working}
                   onChange={(event) => {
                     const nextEffectId = event.target.value;
                     setCanvasEffectIds((current) => ({
@@ -281,7 +300,7 @@ function EffectSelector({
                     setEffectId(nextEffectId);
                   }}
                 >
-                  {effects.map((item) => (
+                  {availableEffects.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
                     </option>

@@ -14,6 +14,7 @@ export class TcpControllerGateway {
     this.statuses = new Map();
     this.webPort = webPort;
     this.previewStates = new Map();
+    this.audioStates = new Map();
   }
 
   async connect(controller) {
@@ -268,6 +269,86 @@ export class TcpControllerGateway {
       }
     });
     socket.on("error", () => {});
+  }
+
+  probeAudioSupport(controller) {
+    return fetch(`http://${controller.host}:${this.webPort}/statistics/static`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((stats) => {
+        const available = Boolean(stats?.AUDIO_SOCKET);
+        this.setAudioAvailable(controller.id, available);
+        if (available) this.connectAudioSocket(controller);
+        return available;
+      })
+      .catch(() => {
+        this.setAudioAvailable(controller.id, false);
+        return false;
+      });
+  }
+
+  setAudioAvailable(controllerId, available) {
+    const state = this.audioStates.get(controllerId) ?? {};
+    state.available = available;
+    state.checkedAt = Date.now();
+    this.audioStates.set(controllerId, state);
+  }
+
+  connectAudioSocket(controller) {
+    const socket = new WebSocket(
+      `ws://${controller.host}:${this.webPort}/ws/audio`,
+    );
+    const state = this.audioStates.get(controller.id) ?? {
+      available: true,
+      checkedAt: Date.now(),
+    };
+    state.socket = socket;
+    state.received ??= [];
+    this.audioStates.set(controller.id, state);
+    socket.on("message", (data) => {
+      try {
+        const parsed = JSON.parse(data.toString());
+        const receivedAt = Date.now();
+        state.latest = { ...parsed, receivedAt };
+        state.received.push(receivedAt);
+        state.received = state.received.filter((at) => at >= receivedAt - 1000);
+      } catch {
+        // Ignore malformed telemetry frames.
+      }
+    });
+    socket.on("close", () => {
+      if (state.socket === socket) {
+        state.socket = null;
+        setTimeout(() => {
+          if (!state.socket && state.available) this.connectAudioSocket(controller);
+        }, 1000);
+      }
+    });
+    socket.on("error", () => {});
+  }
+
+  getAudioStatus(controllerId) {
+    const state = this.audioStates.get(controllerId);
+    return {
+      available: state?.available ?? "unknown",
+      checkedAt: state?.checkedAt ?? null,
+    };
+  }
+
+  getAudioTelemetry(controllerId) {
+    return this.audioStates.get(controllerId)?.latest ?? null;
+  }
+
+  // Messages received in roughly the last second, i.e. the controller's
+  // actual measured telemetry push rate (up to ~60Hz per the firmware, but
+  // varies with its own AUDIO_FPS) - used to pace playback so audio-reactive
+  // effects render at the same cadence the data is actually arriving at,
+  // rather than a fixed default that could over- or under-sample it.
+  getAudioTelemetryRate(controllerId) {
+    const state = this.audioStates.get(controllerId);
+    if (!state?.received) return 0;
+    const now = Date.now();
+    state.received = state.received.filter((at) => at >= now - 1000);
+    return state.received.length;
   }
 
   disconnect(controllerId) {

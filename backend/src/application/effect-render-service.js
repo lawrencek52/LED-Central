@@ -51,13 +51,27 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
     { length: canvas.width * canvas.height },
     () => [0, 0, 0],
   );
-  for (const mapping of parallelMappings) {
+  parallelMappings.forEach((mapping, mappingOrdinal) => {
+    // Each strip gets a contiguous slice of the full band range - not a
+    // single band - so e.g. 4 strips over 16 telemetry bands each cover 4
+    // bands (see the spectrum-band renderer, which averages a strip's slice
+    // for its level bar and takes the max for its peak marker). Indexed by
+    // canvas-wide ordinal, not mapping.stripIndex, which is a per-controller
+    // channel index and need not be contiguous canvas-wide.
+    const bandTotal = parameters.audio?.bandCount ?? parallelMappings.length;
+    const bandStart = Math.floor((mappingOrdinal / parallelMappings.length) * bandTotal);
+    const bandEnd = Math.max(
+      bandStart + 1,
+      Math.floor(((mappingOrdinal + 1) / parallelMappings.length) * bandTotal),
+    );
     const stripPixels = renderer({
       width: mapping.width || canvas.width,
       height: mapping.height || 1,
       parameters: {
         ...parameters,
         randomSeed: stableSeed(`${mapping.controllerId}:${mapping.stripIndex}`),
+        bandStart,
+        bandEnd,
       },
       timestamp,
     });
@@ -66,7 +80,7 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
         pixels[y * canvas.width + x] = stripPixels[index] ?? [0, 0, 0];
       }
     });
-  }
+  });
   return pixels;
 }
 
@@ -910,6 +924,157 @@ const renderers = {
     }
     return pixels;
   },
+  // Ported from NightDriverStrip's VUMeterEffect/VUMeterVerticalEffect
+  // (spectrumeffects.h): a symmetric bar driven by the live VURatioFade
+  // telemetry, with a brief flash on the outer tip when a beat lands.
+  "vu-meter": ({ width, height, parameters, timestamp }) => {
+    const audio = parameters.audio;
+    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+    const half = Math.max(1, Math.floor(width / 2));
+    const center = Math.floor(width / 2);
+    const rawLevel = clamp(Number(audio?.vuRatioFade ?? 0) / 2, 0, 1);
+    const level = amplitudeToDbFraction(rawLevel);
+    const litCount = Math.round(level * half);
+    for (let i = 0; i < litCount; i += 1) {
+      const heat = Math.round((i / Math.max(1, half - 1)) * 255);
+      const color = heatToFireColor(heat);
+      setPixelAllRows(pixels, width, height, center + i, color);
+      setPixelAllRows(pixels, width, height, center - 1 - i, color);
+    }
+    const lastBeatAt = audio?.lastBeatAt;
+    const msSinceBeat = Number.isFinite(lastBeatAt) ? timestamp - lastBeatAt : Infinity;
+    if (litCount > 0 && msSinceBeat >= 0 && msSinceBeat < 120) {
+      const fade = 1 - msSinceBeat / 120;
+      const flash = [255, 255, 255].map((channel) => Math.round(channel * fade));
+      setPixelAllRows(pixels, width, height, center + litCount - 1, flash);
+      setPixelAllRows(pixels, width, height, center - litCount, flash);
+    }
+    return pixels;
+  },
+  // Ported from NightDriverStrip's SpectrumAnalyzerEffect/SpectrumBarEffect
+  // (spectrumeffects.h): one bar per frequency band across a single strip or
+  // matrix row, height driven by the slowly-decaying per-band peak.
+  "spectrum-bars": ({ width, height, parameters }) => {
+    const audio = parameters.audio;
+    const bandCount = Math.max(
+      1,
+      Math.round(Number(parameters.bandCount ?? audio?.bandCount ?? 16)),
+    );
+    const peaksDecayed = audio?.peaksDecayed ?? [];
+    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+    const segmentWidth = width / bandCount;
+    for (let band = 0; band < bandCount; band += 1) {
+      const rawValue = clamp(Number(peaksDecayed[band] ?? 0), 0, 1);
+      const value = amplitudeToDbFraction(rawValue);
+      const barHeight = Math.round(value * height);
+      const xStart = Math.floor(band * segmentWidth);
+      const xEnd = Math.max(xStart + 1, Math.floor((band + 1) * segmentWidth));
+      for (let x = xStart; x < xEnd && x < width; x += 1) {
+        for (let row = 0; row < barHeight; row += 1) {
+          const heat = Math.round((row / Math.max(1, height - 1)) * 255);
+          pixels[(height - 1 - row) * width + x] = heatToFireColor(heat);
+        }
+      }
+    }
+    return pixels;
+  },
+  // Ported from NightDriverStrip's MusicalPaletteFire (fireeffect.h): the same
+  // fire automaton as `fire`, but a beat landing within the last 200ms injects
+  // extra sparks (scaled by live VU) on top of the normal spark rate. Each
+  // simulated step derives its beat-boost from its own reconstructed
+  // wall-clock instant (`startedAtMs + stepIndex * stepMs` vs `audio.lastBeatAt`)
+  // rather than any external mutable flag, so simulateFireHeat's
+  // determinism-from-elapsed-time property still holds on replay.
+  "musical-fire": ({ width, height, parameters, timestamp }) => {
+    const cooling = Math.max(0, Math.round(Number(parameters.cooling ?? 3)));
+    const sparking = clamp(Number(parameters.sparking ?? 100), 0, 255);
+    const sparks = Math.max(0, Math.round(Number(parameters.sparks ?? 3)));
+    const sparkHeight = Math.max(
+      1,
+      Math.round(Number(parameters.sparkHeight ?? 4)),
+    );
+    const beatSparkBoost = Math.max(
+      0,
+      Math.round(Number(parameters.beatSparkBoost ?? 60)),
+    );
+    const mirrored = Boolean(parameters.mirrored);
+    const elapsedSeconds = Number(parameters.timeSeconds ?? 0);
+    const startedAtMs = timestamp - elapsedSeconds * 1000;
+    const ledCount = mirrored ? Math.max(1, Math.floor(width / 2)) : width;
+    const audio = parameters.audio;
+    const lastBeatAt = audio?.lastBeatAt;
+    const vu = clamp(Number(audio?.vu ?? 0), 0, 1);
+
+    const heat = simulateFireHeat({
+      cellCount: ledCount,
+      elapsedSeconds,
+      seedSalt: 31 + Number(parameters.randomSeed ?? 0),
+      step: (h, rng, stepIndex, stepMs) => {
+        for (let i = 0; i < ledCount; i += 1) {
+          const coolAmount = Math.floor(rng() * cooling);
+          h[i] = Math.max(0, h[i] - coolAmount);
+        }
+        for (let i = 0; i < ledCount; i += 1) {
+          const a = h[(i + 1) % ledCount];
+          const b = h[(i + 2) % ledCount];
+          h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
+        }
+        const stepWallTime = startedAtMs + stepIndex * stepMs;
+        const msSinceBeat = Number.isFinite(lastBeatAt)
+          ? stepWallTime - lastBeatAt
+          : Infinity;
+        const beatBoost =
+          msSinceBeat >= 0 && msSinceBeat < 200 ? beatSparkBoost * (1 + vu) : 0;
+        for (let s = 0; s < sparks; s += 1) {
+          if (rng() * 255 < sparking + beatBoost) {
+            const y = ledCount - 1 - Math.floor(rng() * sparkHeight);
+            if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
+          }
+        }
+      },
+    });
+
+    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+    for (let i = 0; i < ledCount; i += 1) {
+      const color = heatToFireColor(heat[i]);
+      setPixelAllRows(pixels, width, height, i, color);
+      if (mirrored) {
+        setPixelAllRows(pixels, width, height, 2 * ledCount - 1 - i, color);
+      }
+    }
+    return pixels;
+  },
+  // New effect: one group of frequency bands per parallel-mapped strip
+  // (bandStart/bandEnd come from renderCanvasEffect's per-parallel-mapping
+  // threading above) - assign several `layout: 'parallel'` strips to this
+  // effect to build a physical multi-band VU wall. The live level bar is the
+  // *average* of the strip's band group (a steadier amplitude reading), while
+  // the slowly-decaying peak-hold marker (from CanvasAudioService's
+  // peaksDecayed, gain-corrected by its AGC) takes the *max* across the same
+  // group, so a spike in any one band within the group still registers.
+  "spectrum-band": ({ width, height, parameters }) => {
+    const audio = parameters.audio;
+    const peaks = audio?.peaks ?? [];
+    const peaksDecayed = audio?.peaksDecayed ?? [];
+    const bandStart = Math.max(0, Math.round(Number(parameters.bandStart ?? 0)));
+    const bandEnd = Math.max(
+      bandStart + 1,
+      Math.round(Number(parameters.bandEnd ?? audio?.bandCount ?? bandStart + 1)),
+    );
+    const level = amplitudeToDbFraction(clamp(average(peaks.slice(bandStart, bandEnd)), 0, 1));
+    const peak = amplitudeToDbFraction(clamp(maxOf(peaksDecayed.slice(bandStart, bandEnd)), 0, 1));
+    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+    const litCount = Math.round(level * width);
+    for (let i = 0; i < litCount; i += 1) {
+      const heat = Math.round((i / Math.max(1, width - 1)) * 255);
+      setPixelAllRows(pixels, width, height, i, heatToFireColor(heat));
+    }
+    const peakPixel = Math.round(peak * width) - 1;
+    if (peakPixel >= 0) {
+      setPixelAllRows(pixels, width, height, peakPixel, [255, 255, 255]);
+    }
+    return pixels;
+  },
   // 'mp4-playback': ({ width, height, parameters, timestamp }) => {
   //   const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
   //   const filePath = String(parameters.filePath ?? './media/mp4/goldendollars.mp4');
@@ -951,6 +1116,32 @@ function parseColor(value) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function average(values) {
+  return values.length
+    ? values.reduce((total, value) => total + Number(value ?? 0), 0) / values.length
+    : 0;
+}
+
+function maxOf(values) {
+  return values.reduce((max, value) => Math.max(max, Number(value ?? 0)), 0);
+}
+
+// The controllers' microphones have roughly a 64dB signal-to-noise ratio, so
+// a VU-style bar needs to be linear in dB - not raw amplitude - across that
+// same range, or most of a strip's LEDs would sit unlit except at the very
+// loudest instants (amplitude is exponential relative to perceived loudness/
+// dB). `amplitude` is a normalized 0..1 full-scale value (1 == 0dB); this
+// returns where it falls, 0..1, across the last AUDIO_DYNAMIC_RANGE_DB
+// decibels below full scale - e.g. a 200-LED strip lights ~200/64 (~3.1)
+// LEDs per dB of signal. Must stay in sync with CanvasAudioService's own
+// AUDIO_DYNAMIC_RANGE_DB, which the AGC targets the middle of.
+const AUDIO_DYNAMIC_RANGE_DB = 64;
+function amplitudeToDbFraction(amplitude, dynamicRangeDb = AUDIO_DYNAMIC_RANGE_DB) {
+  if (!(amplitude > 0)) return 0;
+  const db = 20 * Math.log10(amplitude);
+  return clamp((db + dynamicRangeDb) / dynamicRangeDb, 0, 1);
 }
 
 function hsvToRgb(h, s, v) {
@@ -1278,7 +1469,7 @@ function simulateFireHeat({ cellCount, elapsedSeconds, seedSalt, step }) {
   const heat = new Array(cellCount).fill(0);
   for (let s = startStep; s <= currentStep; s += 1) {
     const rng = mulberry32(seedSalt * 2654435761 + s * 40503);
-    step(heat, rng);
+    step(heat, rng, s, stepMs);
   }
   return heat;
 }

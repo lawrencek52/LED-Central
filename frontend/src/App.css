@@ -242,6 +242,21 @@ body::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.canvas-playback-name {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.badge-muted {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .canvas-playback-row select {
   min-width: 0;
   min-height: 36px;

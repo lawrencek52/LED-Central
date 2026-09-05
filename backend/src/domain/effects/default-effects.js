@@ -500,6 +500,55 @@ export const defaultEffects = [
     },
     tags: ["animated", "palette", "nds"],
   },
+  // --- Audio-reactive effects, driven by controller-reported Audio Telemetry ---
+  // Require a canvas whose controllers currently advertise audio support (see
+  // CanvasAudioService); ported effects use the NightDriverStrip name, the new
+  // multi-band wall effect does not since it wasn't part of that port.
+  {
+    id: "vu-meter",
+    name: "VU Meter",
+    description:
+      "Symmetric VU bar driven by live beat/volume telemetry, with a beat flash - ported from NightDriverStrip's VUMeterEffect.",
+    renderer: "vu-meter",
+    parameters: {},
+    tags: ["animated", "audio"],
+  },
+  {
+    id: "spectrum-bars",
+    name: "Spectrum Analyzer",
+    description:
+      "Per-band bar graph across the canvas driven by live FFT telemetry - ported from NightDriverStrip's SpectrumAnalyzerEffect.",
+    renderer: "spectrum-bars",
+    parameters: {
+      bandCount: { type: "number", min: 4, max: 64, default: 16 },
+    },
+    tags: ["animated", "audio"],
+  },
+  {
+    id: "musical-fire",
+    name: "Musical Fire",
+    description:
+      "Heat-diffusion fire that throws extra sparks on each detected beat - ported from NightDriverStrip's MusicalPaletteFire.",
+    renderer: "musical-fire",
+    parameters: {
+      cooling: { type: "number", min: 0, max: 100, default: 3 },
+      sparking: { type: "number", min: 0, max: 255, default: 100 },
+      sparks: { type: "number", min: 0, max: 20, default: 3 },
+      sparkHeight: { type: "number", min: 1, max: 20, default: 4 },
+      beatSparkBoost: { type: "number", min: 0, max: 200, default: 60 },
+      mirrored: { type: "boolean", default: true },
+    },
+    tags: ["animated", "fire", "audio"],
+  },
+  {
+    id: "spectrum-band",
+    name: "Spectrum Band (per-strip)",
+    description:
+      "One group of frequency bands per parallel strip mapping - the level bar shows the group's average amplitude (auto-gain-corrected to settle around mid-scale) while a slowly-decaying peak marker tracks the group's loudest band. Assign several parallel strips to build a multi-band VU wall.",
+    renderer: "spectrum-band",
+    parameters: {},
+    tags: ["animated", "audio"],
+  },
   // {
   //   id: 'mp4-playback',
   //   name: 'MP4 Playback',

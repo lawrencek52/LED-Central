@@ -102,6 +102,19 @@ test("TCP gateway shares one connection for concurrent sends", async (t) => {
   gateway.disconnect(controller.id);
 });
 
+test("TCP gateway measures the audio telemetry rate from recent message timestamps", () => {
+  const gateway = new TcpControllerGateway();
+  const now = Date.now();
+  gateway.audioStates.set("controller-1", {
+    available: true,
+    received: [now - 900, now - 500, now - 100, now - 1500, now - 2000],
+  });
+
+  // Only the 3 timestamps within the last second should count.
+  assert.equal(gateway.getAudioTelemetryRate("controller-1"), 3);
+  assert.equal(gateway.getAudioTelemetryRate("unknown-controller"), 0);
+});
+
 test("TCP gateway handles a controller socket error without crashing", async (t) => {
   const sockets = new Set();
   const deviceServer = net.createServer((socket) => {

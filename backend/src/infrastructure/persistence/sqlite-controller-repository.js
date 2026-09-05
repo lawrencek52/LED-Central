@@ -16,6 +16,8 @@ export class SqliteControllerRepository {
         connected INTEGER NOT NULL DEFAULT 0,
         strips INTEGER NOT NULL DEFAULT 4,
         led_counts_json TEXT NOT NULL DEFAULT '[215,215,215,215]',
+        audio_available INTEGER NOT NULL DEFAULT -1,
+        audio_checked_at TEXT DEFAULT NULL,
         last_seen TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -24,6 +26,12 @@ export class SqliteControllerRepository {
     const columns = this.database.prepare('PRAGMA table_info(controllers)').all();
     if (!columns.some(column => column.name === 'led_counts_json')) {
       this.database.exec("ALTER TABLE controllers ADD COLUMN led_counts_json TEXT NOT NULL DEFAULT '[215,215,215,215]'");
+    }
+    if (!columns.some(column => column.name === 'audio_available')) {
+      this.database.exec('ALTER TABLE controllers ADD COLUMN audio_available INTEGER NOT NULL DEFAULT -1');
+    }
+    if (!columns.some(column => column.name === 'audio_checked_at')) {
+      this.database.exec('ALTER TABLE controllers ADD COLUMN audio_checked_at TEXT DEFAULT NULL');
     }
   }
 
@@ -38,8 +46,8 @@ export class SqliteControllerRepository {
 
   save(controller) {
     this.database.prepare(`
-      INSERT INTO controllers (id, name, host, port, connected, strips, led_counts_json, last_seen, created_at, updated_at)
-      VALUES (@id, @name, @host, @port, @connected, @strips, @ledCountsJson, @lastSeen, @createdAt, @updatedAt)
+      INSERT INTO controllers (id, name, host, port, connected, strips, led_counts_json, audio_available, audio_checked_at, last_seen, created_at, updated_at)
+      VALUES (@id, @name, @host, @port, @connected, @strips, @ledCountsJson, @audioAvailable, @audioCheckedAt, @lastSeen, @createdAt, @updatedAt)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         host = excluded.host,
@@ -47,12 +55,16 @@ export class SqliteControllerRepository {
         connected = excluded.connected,
         strips = excluded.strips,
         led_counts_json = excluded.led_counts_json,
+        audio_available = excluded.audio_available,
+        audio_checked_at = excluded.audio_checked_at,
         last_seen = excluded.last_seen,
         updated_at = excluded.updated_at
     `).run({
       ...controller,
       connected: controller.connected ? 1 : 0,
       ledCountsJson: JSON.stringify(controller.ledCounts || Array(controller.strips).fill(215)),
+      audioAvailable: controller.audioAvailable === true ? 1 : controller.audioAvailable === false ? 0 : -1,
+      audioCheckedAt: controller.audioCheckedAt ?? null,
       createdAt: controller.createdAt || controller.lastSeen,
       updatedAt: controller.updatedAt || controller.lastSeen
     });
@@ -77,6 +89,8 @@ function toController(row) {
     connected: Boolean(row.connected),
     strips: row.strips,
     ledCounts: JSON.parse(row.led_counts_json || JSON.stringify(Array(row.strips).fill(215))),
+    audioAvailable: row.audio_available === 1 ? true : row.audio_available === 0 ? false : 'unknown',
+    audioCheckedAt: row.audio_checked_at ?? null,
     lastSeen: row.last_seen,
     createdAt: row.created_at,
     updatedAt: row.updated_at

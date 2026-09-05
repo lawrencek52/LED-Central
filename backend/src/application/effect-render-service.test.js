@@ -171,6 +171,190 @@ test("twinkle-stars uses its configured palette after the ignition flash", () =>
   );
 });
 
+test("vu-meter grows a symmetric bar from vuRatioFade and flashes on a recent beat", () => {
+  const service = new EffectRenderService();
+  const canvas = { width: 10, height: 1 };
+  const quiet = service.render({
+    effect: { renderer: "vu-meter", parameters: {} },
+    canvas,
+    parameters: { audio: { vuRatioFade: 0, lastBeatAt: null } },
+    timestamp: 1000,
+  });
+  assert.ok(quiet.pixels.every((pixel) => pixel.every((channel) => channel === 0)));
+
+  const loud = service.render({
+    effect: { renderer: "vu-meter", parameters: {} },
+    canvas,
+    parameters: { audio: { vuRatioFade: 2, lastBeatAt: 950 } },
+    timestamp: 1000,
+  });
+  assert.ok(loud.pixels.some((pixel) => pixel.some(Boolean)));
+  // A beat 50ms in the past fades a white flash onto the bar's outer tips
+  // (fade = 1 - 50/120, so channel = round(255 * fade) = 149).
+  assert.deepEqual(loud.pixels[0], [149, 149, 149]);
+  assert.deepEqual(loud.pixels[9], [149, 149, 149]);
+});
+
+test("spectrum-bars draws taller bars for louder decayed bands, linear in dB", () => {
+  const service = new EffectRenderService();
+  const canvas = { width: 8, height: 4 };
+  // Spread across the dB range (silent, -40dB, -20dB, 0dB) rather than
+  // clustered near full scale, where a linear-amplitude spread like
+  // [0.5, 1] would compress to nearly the same bar height once mapped
+  // logarithmically.
+  const frame = service.render({
+    effect: { renderer: "spectrum-bars", parameters: { bandCount: { default: 4 } } },
+    canvas,
+    parameters: { audio: { bandCount: 4, peaksDecayed: [0, 0.01, 0.1, 1] } },
+  });
+  const litRowsInColumn = (x) =>
+    Array.from({ length: 4 }, (_, y) => frame.pixels[y * 8 + x]).filter((pixel) =>
+      pixel.some(Boolean),
+    ).length;
+  assert.equal(litRowsInColumn(0), 0);
+  assert.ok(litRowsInColumn(2) > litRowsInColumn(0));
+  assert.ok(litRowsInColumn(4) > litRowsInColumn(2));
+  assert.ok(litRowsInColumn(6) > litRowsInColumn(4));
+});
+
+test("musical-fire renders valid pixels with and without a recent beat", () => {
+  const service = new EffectRenderService();
+  const canvas = { width: 20, height: 1 };
+  const effect = {
+    renderer: "musical-fire",
+    parameters: {
+      cooling: { default: 3 },
+      sparking: { default: 100 },
+      sparks: { default: 3 },
+      sparkHeight: { default: 4 },
+      beatSparkBoost: { default: 60 },
+      mirrored: { default: false },
+    },
+  };
+  const noBeat = service.render({
+    effect,
+    canvas,
+    parameters: { timeSeconds: 5, audio: { vu: 0, lastBeatAt: null } },
+    timestamp: 5000,
+  });
+  const onBeat = service.render({
+    effect,
+    canvas,
+    parameters: { timeSeconds: 5, audio: { vu: 1, lastBeatAt: 4900 } },
+    timestamp: 5000,
+  });
+  for (const frame of [noBeat, onBeat]) {
+    assert.equal(frame.pixels.length, 20);
+    assert.ok(frame.pixels.every((pixel) => Array.isArray(pixel) && pixel.length === 3));
+  }
+});
+
+test("spectrum-band lights a level bar plus a separate slow-decaying peak marker", () => {
+  const service = new EffectRenderService();
+  const canvas = { width: 10, height: 1 };
+  const frame = service.render({
+    effect: { renderer: "spectrum-band", parameters: {} },
+    canvas,
+    parameters: { bandIndex: 0, audio: { peaks: [0.3], peaksDecayed: [0.8] } },
+  });
+  // Level and peak are mapped linearly in dB across a 64dB range, not raw
+  // linear amplitude, so 0.3 (-10.5dB) lights ~84% of the strip (8 of 10
+  // pixels - index 0 is heat 0, which the fire palette renders as black by
+  // design) and 0.8 (-1.9dB, near full scale) puts the peak marker at the
+  // very end.
+  assert.deepEqual(frame.pixels, [
+    [0, 0, 0],
+    [84, 0, 0],
+    [172, 0, 0],
+    [255, 0, 0],
+    [255, 84, 0],
+    [255, 168, 0],
+    [255, 252, 0],
+    [255, 255, 80],
+    [0, 0, 0],
+    [255, 255, 255],
+  ]);
+});
+
+test("assigns each parallel strip its own contiguous bandIndex for spectrum-band", () => {
+  const service = new EffectRenderService();
+  const canvas = {
+    width: 4,
+    height: 2,
+    mappings: [
+      { controllerId: "deck-a", stripIndex: 0, layout: "parallel", x: 0, y: 0, width: 4, height: 1 },
+      { controllerId: "deck-b", stripIndex: 1, layout: "parallel", x: 0, y: 1, width: 4, height: 1 },
+    ],
+  };
+  const frame = service.render({
+    effect: { renderer: "spectrum-band", parameters: {} },
+    canvas,
+    parameters: { audio: { bandCount: 2, peaks: [1, 0], peaksDecayed: [1, 0] } },
+  });
+  // Strip 0 (row 0) gets bandIndex 0 (full level + peak marker); strip 1
+  // (row 1) gets bandIndex 1, whose band is silent, so it stays dark.
+  assert.deepEqual(frame.pixels.slice(0, 4), [
+    [0, 0, 0],
+    [255, 0, 0],
+    [255, 252, 0],
+    [255, 255, 255],
+  ]);
+  assert.deepEqual(frame.pixels.slice(4, 8), [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ]);
+});
+
+test("groups multiple telemetry bands per strip: level averages the group, peak takes its max", () => {
+  const service = new EffectRenderService();
+  const canvas = {
+    width: 4,
+    height: 4,
+    mappings: Array.from({ length: 4 }, (_, i) => ({
+      controllerId: `deck-${i}`,
+      stripIndex: i,
+      layout: "parallel",
+      x: 0,
+      y: i,
+      width: 4,
+      height: 1,
+    })),
+  };
+  // 4 strips over 16 bands -> each strip covers a contiguous group of 4 bands.
+  const peaks = new Array(16).fill(0);
+  peaks[0] = 0.1;
+  peaks[1] = 0.2;
+  peaks[2] = 0.3;
+  peaks[3] = 0.4; // strip 0's group averages to 0.25
+  const peaksDecayed = new Array(16).fill(0);
+  peaksDecayed[1] = 0.9; // strip 0's group max is 0.9, distinct from its average
+  const frame = service.render({
+    effect: { renderer: "spectrum-band", parameters: {} },
+    canvas,
+    parameters: { audio: { bandCount: 16, peaks, peaksDecayed } },
+  });
+  // Strip 0 (row 0): level averages the group to 0.25 (-12dB), which maps to
+  // 3 of 4 pixels lit (index 0 is heat 0 -> black by the fire palette's
+  // design), plus a peak marker at index 3 for the group's max (0.9, -0.9dB,
+  // near full scale). The other 3 strips' band groups are silent.
+  assert.deepEqual(frame.pixels.slice(0, 4), [
+    [0, 0, 0],
+    [255, 0, 0],
+    [255, 252, 0],
+    [255, 255, 255],
+  ]);
+  for (let row = 1; row < 4; row += 1) {
+    assert.deepEqual(frame.pixels.slice(row * 4, row * 4 + 4), [
+      [0, 0, 0],
+      [0, 0, 0],
+      [0, 0, 0],
+      [0, 0, 0],
+    ]);
+  }
+});
+
 // test('mp4-playback animates over time instead of showing a single still frame', () => {
 //   const service = new EffectRenderService();
 //   const canvas = { width: 16, height: 8 };

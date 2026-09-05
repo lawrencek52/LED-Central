@@ -72,14 +72,18 @@ function validateCanvasPayload(body, { partial = false } = {}) {
   };
 }
 
-export function createCanvasRouter({ canvasService, playbackService = null }) {
+export function createCanvasRouter({
+  canvasService,
+  playbackService = null,
+  audioService = null,
+}) {
   const router = Router();
-  router.get("/", (req, res) => res.json(canvasService.list()));
+  router.get("/", (req, res) => res.json(canvasService.list().map(withAudio)));
   router.post("/", (req, res, next) => {
     try {
       return res
         .status(201)
-        .json(canvasService.create(validateCanvasPayload(req.body)));
+        .json(withAudio(canvasService.create(validateCanvasPayload(req.body))));
     } catch (error) {
       return next(error);
     }
@@ -87,9 +91,16 @@ export function createCanvasRouter({ canvasService, playbackService = null }) {
   router.get("/:id", (req, res, next) => {
     const canvas = canvasService.get(req.params.id);
     return canvas
-      ? res.json(canvas)
+      ? res.json(withAudio(canvas))
       : next(Object.assign(new Error("Canvas not found"), { statusCode: 404 }));
   });
+
+  function withAudio(canvas) {
+    return {
+      ...canvas,
+      audioAvailable: audioService ? audioService.getCanvasAudio(canvas).available : false,
+    };
+  }
   router.put("/:id", (req, res, next) => {
     try {
       const canvas = canvasService.update(
@@ -98,7 +109,7 @@ export function createCanvasRouter({ canvasService, playbackService = null }) {
         readRevision(req),
       );
       return canvas
-        ? res.json(canvas)
+        ? res.json(withAudio(canvas))
         : next(
             Object.assign(new Error("Canvas not found"), { statusCode: 404 }),
           );
@@ -114,7 +125,7 @@ export function createCanvasRouter({ canvasService, playbackService = null }) {
         readRevision(req),
       );
       return canvas
-        ? res.json(canvas)
+        ? res.json(withAudio(canvas))
         : next(
             Object.assign(new Error("Canvas not found"), { statusCode: 404 }),
           );

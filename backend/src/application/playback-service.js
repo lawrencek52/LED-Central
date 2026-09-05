@@ -13,6 +13,8 @@ export class PlaybackService {
     now = () => Date.now(),
     frameRate = 20,
     targetQueueMs = 1500,
+    audioService = null,
+    audioQueueFrames = 2,
   }) {
     this.canvasService = canvasService;
     this.effectService = effectService;
@@ -24,9 +26,44 @@ export class PlaybackService {
     this.now = now;
     this.frameRate = frameRate;
     this.targetQueueMs = targetQueueMs;
+    this.audioService = audioService;
+    this.audioQueueFrames = audioQueueFrames;
     this.sessions = new Map();
     this.timers = new Map();
     this.activeByCanvas = new Map();
+  }
+
+  // Audio-tagged effects read live telemetry as a `parameters.audio` input (see
+  // renderFrame) computed by audioService, rather than being stateful themselves.
+  requiresAudio(effect) {
+    return Boolean(effect.tags?.includes("audio"));
+  }
+
+  // Non-audio effects pre-render up to `targetQueueMs` (1500ms) ahead to smooth over
+  // network jitter. That lookahead would make audio-reactive effects visibly lag the
+  // live sound, so those sessions use a much shorter lookahead instead.
+  queueDepthMs(effect, frameRate) {
+    return this.requiresAudio(effect)
+      ? this.audioQueueFrames * this.frameIntervalMs(frameRate)
+      : this.targetQueueMs;
+  }
+
+  // Audio-tagged effects render at the rate telemetry is actually arriving at
+  // (measured per-controller and re-checked live, since it can change as
+  // controllers join/leave/reconnect) rather than a fixed default - matching
+  // the source cadence instead of over- or under-sampling it. Non-audio
+  // effects keep the caller-requested (or default) fps.
+  effectiveFrameRate(effect, canvas, fps) {
+    if (this.requiresAudio(effect)) {
+      const measured = Math.round(
+        this.audioService?.getUpdateRateHz?.(canvas) || this.frameRate,
+      );
+      // Clamp rather than reuse the throwing normalizeFrameRate - a measured
+      // rate is an observation, not user input, so a transient out-of-range
+      // reading should be tolerated instead of failing the render tick.
+      return Math.min(60, Math.max(1, measured));
+    }
+    return fps === undefined ? this.frameRate : this.normalizeFrameRate(fps);
   }
 
   list() {
@@ -38,13 +75,19 @@ export class PlaybackService {
     const effect = this.effectService.get(effectId);
     if (!canvas) throw new EffectRenderError("Canvas not found", 404);
     if (!effect) throw new EffectRenderError("Effect not found", 404);
+    if (this.requiresAudio(effect) && !this.audioService?.getCanvasAudio(canvas)?.available) {
+      throw new EffectRenderError(
+        "Canvas has no audio-capable controllers currently available",
+        400,
+      );
+    }
 
     const previousSession = this.activeByCanvas.get(canvasId);
     if (previousSession) this.stop(previousSession.id);
 
-    const frameRate =
-      fps === undefined ? this.frameRate : this.normalizeFrameRate(fps);
+    const frameRate = this.effectiveFrameRate(effect, canvas, fps);
     const intervalMs = this.frameIntervalMs(frameRate);
+    const targetQueueMs = this.queueDepthMs(effect, frameRate);
     const startedAt = this.now();
     const firstFrameAt = Math.max(
       startedAt + intervalMs,
@@ -56,7 +99,7 @@ export class PlaybackService {
       parameters,
       startedAt,
       firstFrameAt,
-      count: this.queueFrameCount(frameRate),
+      count: this.queueFrameCount(frameRate, targetQueueMs),
       frameRate,
     });
     const distribution = await this.distributeFrames({ canvas, frames });
@@ -66,6 +109,7 @@ export class PlaybackService {
       canvasId,
       effectId,
       parameters,
+      targetQueueMs,
       startedAt: new Date(startedAt).toISOString(),
       lastFrameAt: frames[frames.length - 1].timestamp,
       distribution,
@@ -131,13 +175,17 @@ export class PlaybackService {
     startedAt,
     timestamp = this.now(),
   }) {
+    const effectParameters = {
+      ...parameters,
+      timeSeconds: (timestamp - startedAt) / 1000,
+    };
+    if (this.requiresAudio(effect)) {
+      effectParameters.audio = this.audioService.getCanvasAudio(canvas);
+    }
     return this.renderService.render({
       effect,
       canvas,
-      parameters: {
-        ...parameters,
-        timeSeconds: (timestamp - startedAt) / 1000,
-      },
+      parameters: effectParameters,
       timestamp,
     });
   }
@@ -154,11 +202,8 @@ export class PlaybackService {
     return Math.ceil(1000 / frameRate);
   }
 
-  queueFrameCount(frameRate = this.frameRate) {
-    return Math.max(
-      1,
-      Math.round(this.targetQueueMs / this.frameIntervalMs(frameRate)),
-    );
+  queueFrameCount(frameRate = this.frameRate, targetQueueMs = this.targetQueueMs) {
+    return Math.max(1, Math.round(targetQueueMs / this.frameIntervalMs(frameRate)));
   }
 
   renderFrames({
@@ -201,12 +246,16 @@ export class PlaybackService {
   scheduleFrames({ session, canvas, effect }) {
     const tick = async () => {
       if (session.status !== "playing") return;
+      if (this.requiresAudio(effect)) {
+        session.frameRate = this.effectiveFrameRate(effect, canvas);
+        session.targetQueueMs = this.queueDepthMs(effect, session.frameRate);
+      }
       const intervalMs = this.frameIntervalMs(session.frameRate);
       try {
         // Top the queue back up to the target lookahead duration one tick's worth
         // at a time instead of waiting and sending a large burst, so delivery stays
         // paced close to the real playback frame rate.
-        const targetLastFrameAt = this.now() + this.targetQueueMs;
+        const targetLastFrameAt = this.now() + session.targetQueueMs;
         const framesNeeded = Math.round(
           (targetLastFrameAt - session.lastFrameAt) / intervalMs,
         );

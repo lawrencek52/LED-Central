@@ -3,6 +3,137 @@ import assert from "node:assert/strict";
 import { PlaybackService } from "./playback-service.js";
 import { EffectRenderService } from "./effect-render-service.js";
 
+function baseServiceOptions() {
+  return {
+    canvasService: {
+      get: (id) =>
+        id === "canvas-1"
+          ? {
+              id,
+              width: 1,
+              height: 1,
+              mappings: [{ controllerId: "deck-1", stripIndex: 0 }],
+            }
+          : null,
+    },
+    effectService: {
+      get: (id) =>
+        id === "vu-meter"
+          ? { id, renderer: "vu-meter", parameters: {}, tags: ["audio"] }
+          : id === "solid"
+            ? {
+                id,
+                renderer: "solid",
+                parameters: { color: { default: "#ffffff" } },
+              }
+            : null,
+    },
+    renderService: new EffectRenderService(),
+  };
+}
+
+test("rejects starting an audio-tagged effect when no canvas audio is available", async () => {
+  const service = new PlaybackService({
+    ...baseServiceOptions(),
+    distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
+    audioService: { getCanvasAudio: () => ({ available: false }) },
+  });
+  await assert.rejects(
+    service.start({ canvasId: "canvas-1", effectId: "vu-meter" }),
+    /audio-capable controllers/,
+  );
+});
+
+test("injects live canvas audio into an audio-tagged effect's parameters", async () => {
+  const sent = [];
+  const service = new PlaybackService({
+    ...baseServiceOptions(),
+    distributionService: {
+      distributeCanvasFrame: async (payload) => {
+        sent.push(payload);
+        return { status: "sent" };
+      },
+    },
+    audioService: {
+      getCanvasAudio: () => ({ available: true, vuRatioFade: 2, lastBeatAt: null }),
+    },
+    idFactory: () => "session-1",
+    now: () => 1700000000000,
+  });
+  const session = await service.start({ canvasId: "canvas-1", effectId: "vu-meter" });
+  assert.equal(session.status, "playing");
+  // vuRatioFade: 2 on a 1-pixel-wide strip lights the single pixel via the
+  // fire palette at heat 0, i.e. black - the important thing is the render
+  // didn't throw and consumed the injected `audio` parameter without error.
+  assert.equal(sent[0].frame.pixels.length, 1);
+  service.stop(session.id);
+});
+
+test("paces an audio-tagged effect to the measured telemetry rate instead of the requested fps", async () => {
+  const service = new PlaybackService({
+    ...baseServiceOptions(),
+    distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
+    audioService: {
+      getCanvasAudio: () => ({ available: true }),
+      getUpdateRateHz: () => 45,
+    },
+    frameRate: 20,
+    idFactory: () => "session-1",
+  });
+  const session = await service.start({
+    canvasId: "canvas-1",
+    effectId: "vu-meter",
+    fps: 20,
+  });
+  assert.equal(session.frameRate, 45);
+  service.stop(session.id);
+
+  const nonAudio = await service.start({
+    canvasId: "canvas-1",
+    effectId: "solid",
+    fps: 20,
+  });
+  assert.equal(nonAudio.frameRate, 20);
+  service.stop(nonAudio.id);
+});
+
+test("falls back to the default frame rate when telemetry rate can't be measured", async () => {
+  const service = new PlaybackService({
+    ...baseServiceOptions(),
+    distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
+    audioService: {
+      getCanvasAudio: () => ({ available: true }),
+      getUpdateRateHz: () => 0,
+    },
+    frameRate: 20,
+    idFactory: () => "session-1",
+  });
+  const session = await service.start({ canvasId: "canvas-1", effectId: "vu-meter" });
+  assert.equal(session.frameRate, 20);
+  service.stop(session.id);
+});
+
+test("uses a much shorter frame lookahead for audio-tagged effects than the default", async () => {
+  const service = new PlaybackService({
+    ...baseServiceOptions(),
+    distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
+    audioService: { getCanvasAudio: () => ({ available: true }) },
+    frameRate: 20,
+    targetQueueMs: 1500,
+    audioQueueFrames: 2,
+    idFactory: () => "session-1",
+  });
+  const session = await service.start({ canvasId: "canvas-1", effectId: "vu-meter" });
+  // 2 frames at 20fps (50ms/frame) = 100ms, not the default 1500ms.
+  assert.equal(session.targetQueueMs, 100);
+  assert.equal(session.frameCount, 2);
+  service.stop(session.id);
+
+  const nonAudio = await service.start({ canvasId: "canvas-1", effectId: "solid" });
+  assert.equal(nonAudio.targetQueueMs, 1500);
+  service.stop(nonAudio.id);
+});
+
 test("renders and distributes an effect frame on playback start", async () => {
   const sent = [];
   const service = new PlaybackService({

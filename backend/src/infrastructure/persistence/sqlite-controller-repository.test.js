@@ -20,6 +20,8 @@ test('persists controller configuration across repository instances', () => {
   assert.deepEqual(second.get(controller.id), {
     ...controller,
     ledCounts: [215, 215, 215, 215],
+    audioAvailable: 'unknown',
+    audioCheckedAt: null,
     createdAt: controller.lastSeen,
     updatedAt: controller.lastSeen
   });
