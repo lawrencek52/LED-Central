@@ -1,9 +1,15 @@
 const DEFAULT_BAND_COUNT = 16; // matches the firmware's fixed RAW_BAND_COUNT (Mel-spaced)
 
-// Matches the mics' ~64dB signal-to-noise ratio - must stay in sync with
-// effect-render-service.js's own AUDIO_DYNAMIC_RANGE_DB, which the renderers
-// use to map amplitude onto LEDs linearly in dB across that same range.
-const AUDIO_DYNAMIC_RANGE_DB = 64;
+// The realistic acoustic range we expect to actually see, not the mic's raw
+// telemetry range (raw band magnitude runs roughly 0 to a few million,
+// ~130dB of theoretical span if you took 20*log10 of it directly - but most
+// of that is noise floor, not meaningful quiet audio). Per testing/judgment
+// on 2026-09-05: realistically as loud as ~100dB and as quiet as ~50dB, so
+// 50dB is what should actually span the LED strip's full length - not a
+// guessed SNR figure. Must stay in sync with effect-render-service.js's own
+// AUDIO_DYNAMIC_RANGE_DB, which the renderers use to map amplitude onto
+// LEDs linearly in dB across that same range.
+const AUDIO_DYNAMIC_RANGE_DB = 50;
 
 // Calibrates `rawBands` (unbounded RMS FFT magnitude, see below) to a
 // 0..1-ish linear amplitude where 1.0 == 0dB/full-scale. The base value is
@@ -20,17 +26,19 @@ const AUDIO_DYNAMIC_RANGE_DB = 64;
 // the math, which is why it's a plain constructor parameter.
 const DEFAULT_REFERENCE_MAGNITUDE = 2_000_000 * 10 ** (-10 / 20); // ~632k, -10dB
 
-// Peak-hold marker: jumps instantly to a new peak, holds there, then falls
-// at a constant rate *in dB* (matching how loudness is actually perceived
-// and how the renderers map amplitude onto LEDs - linear in dB, not in raw
-// amplitude) rather than exponentially or linearly in amplitude - either of
-// which would look non-uniform (barely moving near the top of the range,
-// then suddenly diving near the bottom) once mapped through that same
-// dB-linear LED scale. 1dB/sec (the original default) read as too slow on
-// real hardware on 2026-09-05; raised to 6dB/sec (a full 64dB range now
-// falls in ~10.7s instead of ~64s).
-const DEFAULT_PEAK_HOLD_MS = 1000;
-const DEFAULT_PEAK_DECAY_DB_PER_SECOND = 6;
+// Peak-hold marker: jumps instantly to a new peak, holds there for a brief
+// moment (just long enough to be visible as a hold rather than a flicker -
+// 1000ms read as a full second's stall on real hardware on 2026-09-05, cut
+// down to a few frames), then falls at a constant rate *in dB* (matching how
+// loudness is actually perceived and how the renderers map amplitude onto
+// LEDs - linear in dB, not in raw amplitude) rather than exponentially or
+// linearly in amplitude - either of which would look non-uniform (barely
+// moving near the top of the range, then suddenly diving near the bottom)
+// once mapped through that same dB-linear LED scale. The fall rate has been
+// doubled twice on real-hardware feedback: 1 -> 6 -> 12dB/sec (a full 50dB
+// range now falls in ~4.2s).
+const DEFAULT_PEAK_HOLD_MS = 100;
+const DEFAULT_PEAK_DECAY_DB_PER_SECOND = 12;
 
 // Our own AGC (fast-attack/slow-release, like a broadcast compressor),
 // off by default: with the mic's ~64dB useful range spread across 80-200+

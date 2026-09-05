@@ -1194,20 +1194,35 @@ function peakMarkerPositions(index, stripLength) {
     : [index];
 }
 
-// The controllers' microphones have roughly a 64dB signal-to-noise ratio, so
-// a VU-style bar needs to be linear in dB - not raw amplitude - across that
-// same range, or most of a strip's LEDs would sit unlit except at the very
-// loudest instants (amplitude is exponential relative to perceived loudness/
-// dB). `amplitude` is a normalized 0..1 full-scale value (1 == 0dB); this
-// returns where it falls, 0..1, across the last AUDIO_DYNAMIC_RANGE_DB
-// decibels below full scale - e.g. a 200-LED strip lights ~200/64 (~3.1)
-// LEDs per dB of signal. Must stay in sync with CanvasAudioService's own
-// AUDIO_DYNAMIC_RANGE_DB, which the AGC targets the middle of.
-const AUDIO_DYNAMIC_RANGE_DB = 64;
+// A VU-style bar needs to be linear in dB - not raw amplitude - across
+// whatever range it displays, or most of a strip's LEDs would sit unlit
+// except at the very loudest instants (amplitude is exponential relative to
+// perceived loudness/dB). The raw telemetry has ~130dB of theoretical span
+// (RMS FFT magnitude of roughly 0 to a few million), but most of that is
+// noise floor, not meaningfully "quiet" audio - realistically the mics will
+// see at most ~100dB and as little as ~50dB, so AUDIO_DYNAMIC_RANGE_DB spans
+// that realistic 50dB window instead of guessing at the mic's own spec.
+// Adjust this (and CanvasAudioService's copy, which it must stay in sync
+// with - the AGC targets the middle of it) if real testing suggests a
+// different usable range.
+const AUDIO_DYNAMIC_RANGE_DB = 50;
+
+// Rather than the bottom of that range going fully dark, this fraction of
+// the strip stays lit even in silence - like a real VU meter's needle
+// resting slightly above zero rather than pinned at the bottom. Adjust to
+// taste.
+const SILENCE_FLOOR_FRACTION = 0.15;
+
+// `amplitude` is a normalized 0..1 full-scale value (1 == 0dB); this returns
+// where it should land on the strip, 0..1, across the last
+// AUDIO_DYNAMIC_RANGE_DB decibels below full scale, remapped into
+// [SILENCE_FLOOR_FRACTION, 1] so silence still shows a baseline glow instead
+// of nothing.
 function amplitudeToDbFraction(amplitude, dynamicRangeDb = AUDIO_DYNAMIC_RANGE_DB) {
-  if (!(amplitude > 0)) return 0;
+  if (!(amplitude > 0)) return SILENCE_FLOOR_FRACTION;
   const db = 20 * Math.log10(amplitude);
-  return clamp((db + dynamicRangeDb) / dynamicRangeDb, 0, 1);
+  const rawFraction = clamp((db + dynamicRangeDb) / dynamicRangeDb, 0, 1);
+  return SILENCE_FLOOR_FRACTION + (1 - SILENCE_FLOOR_FRACTION) * rawFraction;
 }
 
 function hsvToRgb(h, s, v) {

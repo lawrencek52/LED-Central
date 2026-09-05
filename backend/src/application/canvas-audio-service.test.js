@@ -153,17 +153,17 @@ test("peak-hold jumps instantly to a new peak, holds, then falls smoothly at a c
     "100ms of 1dB/sec decay should barely move the marker, not jump",
   );
 
-  // A full-scale peak takes ~64s to fall off the bottom of the display at
-  // 1dB/sec, since the display's own dynamic range is 64dB - i.e. the same
-  // constant dB/sec rate takes visibly longer to cross a longer LED strip
-  // (more LEDs per dB) and shorter to cross a shorter one, without the
-  // service needing to know strip length at all.
+  // At 1dB/sec, a full-scale (0dB) peak takes ~64s to fall 64dB, well past
+  // any display's dynamic range - the same constant dB/sec rate takes
+  // visibly longer to cross a longer LED strip (more LEDs per dB) and
+  // shorter to cross a shorter one, without the service needing to know
+  // strip length at all.
   now = 500 + 64_000;
   telemetry.get("deck-a").receivedAt = now;
   const fullyFallen = service.getCanvasAudio(canvas);
   assert.ok(
     fullyFallen.peaksDecayed[0] < 0.001,
-    "after ~64s at 1dB/sec a full-scale peak should have fallen off the bottom of the 64dB display range",
+    "after ~64s at 1dB/sec a full-scale peak should have fallen 64dB, off the bottom of any realistic display range",
   );
 });
 
@@ -187,10 +187,10 @@ test("AGC is disabled by default - a loud signal isn't gain-adjusted toward the 
 });
 
 test("AGC, when enabled, slowly raises gain toward the midpoint of the dB display range", () => {
-  // Target is ~50% *up the 64dB display range* (-32dB, ~0.0251 linear
+  // Target is ~50% *up the 50dB display range* (-25dB, ~0.0562 linear
   // amplitude) - not 50% raw linear amplitude - so it stays consistent with
   // the renderers' own dB-linear LED mapping. 0.01 is below that target, so
-  // gain should climb (slowly - ~30s time constant) to bring it up to ~0.0251.
+  // gain should climb (slowly - ~30s time constant) to bring it up to ~0.0562.
   let now = 0;
   const telemetry = new Map([
     ["deck-a", { rawBands: [0.01, 0.01], vu: 0, vuRatio: 0, vuRatioFade: 0, beatSeq: 0, bpm: 0, receivedAt: now }],
@@ -217,7 +217,7 @@ test("AGC, when enabled, slowly raises gain toward the midpoint of the dB displa
   telemetry.get("deck-a").receivedAt = now;
   const later = service.getCanvasAudio(canvas);
   assert.ok(
-    later.peaks[0] > 0.024 && later.peaks[0] <= 0.0252,
+    later.peaks[0] > 0.055 && later.peaks[0] <= 0.0563,
     "gain should have converged near the dB-range midpoint",
   );
 });

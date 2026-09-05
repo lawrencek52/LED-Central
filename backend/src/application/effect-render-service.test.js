@@ -197,26 +197,32 @@ test("vu-meter grows a symmetric bar from vuRatioFade and flashes on a recent be
 
 test("spectrum-bars draws taller bars for louder bands, linear in dB", () => {
   const service = new EffectRenderService();
-  const canvas = { width: 8, height: 4 };
+  const canvas = { width: 8, height: 20 };
   // Spread across the dB range (silent, -40dB, -20dB, 0dB) rather than
   // clustered near full scale, where a linear-amplitude spread like
   // [0.5, 1] would compress to nearly the same bar height once mapped
-  // logarithmically. peaksDecayed matches peaks here so the peak-hold cap
-  // coincides with the bar top instead of adding an extra lit row.
+  // logarithmically. No peaksDecayed, so there's no peak-hold marker to
+  // interfere with reading each band's own live bar height. The bar is a
+  // live fire simulation, so individual lit cells can legitimately flicker
+  // dark - what's deterministic is that the renderer never draws anything
+  // *above* a band's computed height, so the row right above each bar is
+  // guaranteed black regardless of the fire underneath.
   const levels = [0, 0.01, 0.1, 1];
   const frame = service.render({
     effect: { renderer: "spectrum-bars", parameters: { bandCount: { default: 4 } } },
     canvas,
-    parameters: { audio: { bandCount: 4, peaks: levels, peaksDecayed: levels } },
+    parameters: { timeSeconds: 5, audio: { bandCount: 4, peaks: levels } },
+    timestamp: 5000,
   });
-  const litRowsInColumn = (x) =>
-    Array.from({ length: 4 }, (_, y) => frame.pixels[y * 8 + x]).filter((pixel) =>
-      pixel.some(Boolean),
-    ).length;
-  assert.equal(litRowsInColumn(0), 0);
-  assert.ok(litRowsInColumn(2) > litRowsInColumn(0));
-  assert.ok(litRowsInColumn(4) > litRowsInColumn(2));
-  assert.ok(litRowsInColumn(6) > litRowsInColumn(4));
+  const isBlack = (pixel) => pixel.every((channel) => channel === 0);
+  const pixelAt = (x, row) => frame.pixels[(canvas.height - 1 - row) * canvas.width + x];
+  // silent -> the silence floor alone gives a height-3 bar (out of 20)
+  assert.ok(isBlack(pixelAt(0, 3)));
+  // -40dB -> height 6
+  assert.ok(isBlack(pixelAt(2, 6)));
+  // -20dB -> height 13
+  assert.ok(isBlack(pixelAt(4, 13)));
+  // 0dB (full scale) fills the whole strip - nothing above it to check.
 });
 
 test("spectrum-bars draws a red peak-hold cap above the live bar when it's fallen since the peak", () => {
@@ -225,13 +231,15 @@ test("spectrum-bars draws a red peak-hold cap above the live bar when it's falle
   const frame = service.render({
     effect: { renderer: "spectrum-bars", parameters: { bandCount: { default: 1 } } },
     canvas,
-    // Live level has since dropped to near-silent, but the peak-hold marker
-    // is still up near full scale.
-    parameters: { audio: { bandCount: 1, peaks: [0.001], peaksDecayed: [1] } },
+    // Live level has since dropped to near-silent (floors to a 1-row bar),
+    // but the peak-hold marker is still up near full scale.
+    parameters: { timeSeconds: 5, audio: { bandCount: 1, peaks: [0.001], peaksDecayed: [1] } },
+    timestamp: 5000,
   });
   const column = Array.from({ length: 4 }, (_, y) => frame.pixels[y * 4]);
   assert.deepEqual(column[0], [255, 0, 0]); // top row: the peak-hold cap
-  assert.ok(column.slice(1).every((pixel) => pixel.every((channel) => channel === 0)));
+  assert.deepEqual(column[1], [0, 0, 0]);
+  assert.deepEqual(column[2], [0, 0, 0]);
 });
 
 test("spectrum-bars widens the peak-hold cap to 2 pixels once the strip is over 100 LEDs", () => {
@@ -240,12 +248,13 @@ test("spectrum-bars widens the peak-hold cap to 2 pixels once the strip is over 
   const frame = service.render({
     effect: { renderer: "spectrum-bars", parameters: { bandCount: { default: 1 } } },
     canvas,
-    parameters: { audio: { bandCount: 1, peaks: [0], peaksDecayed: [1] } },
+    parameters: { timeSeconds: 5, audio: { bandCount: 1, peaks: [0], peaksDecayed: [1] } },
+    timestamp: 5000,
   });
   const column = Array.from({ length: 120 }, (_, y) => frame.pixels[y * 4]);
   assert.deepEqual(column[0], [255, 0, 0]);
   assert.deepEqual(column[1], [255, 0, 0]);
-  assert.ok(column.slice(2).every((pixel) => pixel.every((channel) => channel === 0)));
+  assert.deepEqual(column[2], [0, 0, 0]); // between the marker and the silence floor's own glow further down
 });
 
 test("musical-fire renders valid pixels with and without a recent beat", () => {
@@ -346,12 +355,14 @@ test("assigns each parallel strip its own contiguous bandIndex for spectrum-band
   });
   // Strip 0 (row 0) gets bandIndex 0 (full level + peak marker, on a live
   // fire rather than a static gradient); strip 1 (row 1) gets bandIndex 1,
-  // whose band is silent, so it stays dark.
+  // whose band is silent - the silence floor still puts a small peak
+  // marker at its first pixel (peaks and peaksDecayed of 0 both floor to
+  // the same fraction), but nothing beyond that.
   assert.deepEqual(frame.pixels[3], [255, 0, 0]); // peak marker at full scale
   frame.pixels.slice(0, 3).forEach(assertValidRgb);
   assert.ok(frame.pixels.slice(0, 3).some((pixel) => pixel.some(Boolean)));
   assert.deepEqual(frame.pixels.slice(4, 8), [
-    [0, 0, 0],
+    [255, 0, 0],
     [0, 0, 0],
     [0, 0, 0],
     [0, 0, 0],
@@ -390,13 +401,14 @@ test("groups multiple telemetry bands per strip: level averages the group, peak 
   // Strip 0 (row 0): level averages the group to 0.25 (-12dB), which maps to
   // 3 of 4 pixels lit (on a live fire, not a static gradient), plus a peak
   // marker at index 3 for the group's max (0.9, -0.9dB, near full scale).
-  // The other 3 strips' band groups are silent.
+  // The other 3 strips' band groups are silent - the silence floor still
+  // puts a small peak marker at each one's first pixel.
   assert.deepEqual(frame.pixels[3], [255, 0, 0]);
   frame.pixels.slice(0, 3).forEach(assertValidRgb);
   assert.ok(frame.pixels.slice(0, 3).some((pixel) => pixel.some(Boolean)));
   for (let row = 1; row < 4; row += 1) {
     assert.deepEqual(frame.pixels.slice(row * 4, row * 4 + 4), [
-      [0, 0, 0],
+      [255, 0, 0],
       [0, 0, 0],
       [0, 0, 0],
       [0, 0, 0],
