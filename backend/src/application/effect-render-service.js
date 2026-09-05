@@ -1066,10 +1066,22 @@ const renderers = {
   // One of this effect's original goals was for the level bar to actually be
   // the Fire effect rather than a static per-position gradient - so instead
   // of a solid color ramp, a real fire automaton (the same one `fire` uses)
-  // burns continuously across the *entire* strip, and the live level just
-  // masks how much of it is currently visible, like a curtain sliding down
-  // over an always-lit flame. That keeps the flicker/texture alive at any
-  // level instead of freezing into a flat gradient.
+  // burns across the strip, and the live level masks how much of it is
+  // currently visible.
+  //
+  // Sparks are anchored at the *visible* tip (litCount - 1), not the strip's
+  // physical end (width - 1). Cooling/diffusion only carries heat a few tens
+  // of cells from wherever it's injected within the ~3s simulation window
+  // (see simulateFireHeat), so on a long strip (200+ LEDs) at a quiet/floor
+  // level - a small litCount far from index width-1 - sparking at the far
+  // end left the visible region completely outside the fire's reach: heat
+  // never arrived, so it rendered as permanently black except for the static
+  // peak marker. That's the "frozen" display reported on 215-LED strips
+  // (216-LED firmware buffer) which never showed up on an 88-LED strip,
+  // where the same floor litCount sits close enough to width-1 for sparks to
+  // still reach it. Anchoring to the visible tip instead guarantees a spark
+  // source is always exactly where the flame needs to be seen, regardless of
+  // strip length or level.
   "spectrum-band": ({ width, height, parameters, timestamp }) => {
     const audio = parameters.audio;
     const peaks = audio?.peaks ?? [];
@@ -1088,6 +1100,7 @@ const renderers = {
     const sparking = 100;
     const sparks = 3;
     const sparkHeight = 4;
+    const sparkTip = Math.max(0, litCount - 1);
     const heat = simulateFireHeat({
       cellCount: width,
       elapsedSeconds,
@@ -1104,7 +1117,7 @@ const renderers = {
         }
         for (let s = 0; s < sparks; s += 1) {
           if (rng() * 255 < sparking) {
-            const y = width - 1 - Math.floor(rng() * sparkHeight);
+            const y = sparkTip - Math.floor(rng() * sparkHeight);
             if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
           }
         }

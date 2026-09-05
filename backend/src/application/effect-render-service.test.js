@@ -318,6 +318,36 @@ test("spectrum-band lights a fire-driven level bar plus a separate peak-hold mar
   );
 });
 
+test("spectrum-band's fire stays visible near a quiet level's own tip on a long strip, not frozen black", () => {
+  // Regression test: on a 215+ LED strip, a quiet/floor-level reading gives a
+  // small litCount (here, silence with no telemetry - peaks/peaksDecayed
+  // empty, per CanvasAudioService's unavailable snapshot) that sits far from
+  // the physical strip's high-index end. Sparks must anchor to the visible
+  // tip (litCount - 1), not the strip's end, or heat never reaches the
+  // visible region within the fire's ~3s simulation window and the display
+  // renders as permanently black except for the static peak marker - exactly
+  // what was reported as a "frozen" display on 215-LED strips (never seen on
+  // shorter strips, where the same floor litCount sits close enough to the
+  // strip's end for sparks to still reach it).
+  const service = new EffectRenderService();
+  const canvas = { width: 215, height: 1 };
+  const audio = { peaks: [], peaksDecayed: [] };
+  const hashes = new Set();
+  for (const timeSeconds of [0, 2, 5, 10, 20, 30]) {
+    const frame = service.render({
+      effect: { renderer: "spectrum-band", parameters: {} },
+      canvas,
+      parameters: { timeSeconds, audio },
+      timestamp: timeSeconds * 1000,
+    });
+    hashes.add(JSON.stringify(frame.pixels));
+  }
+  assert.ok(
+    hashes.size > 1,
+    "the rendered frame should change over time instead of staying frozen",
+  );
+});
+
 test("spectrum-band widens the peak-hold marker to 2 pixels once the strip is over 100 LEDs", () => {
   const service = new EffectRenderService();
   const canvas = { width: 120, height: 1 };
