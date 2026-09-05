@@ -22,6 +22,7 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [connectingId, setConnectingId] = useState(null);
+  const [recheckingAudioId, setRecheckingAudioId] = useState(null);
   const [error, setError] = useState("");
   const [realtimeStatus, setRealtimeStatus] = useState("connecting");
   const [lastEvent, setLastEvent] = useState("");
@@ -146,6 +147,21 @@ function App() {
       setError(requestError.message);
     } finally {
       setConnectingId(null);
+    }
+  }
+
+  async function handleRecheckAudio(controller) {
+    setRecheckingAudioId(controller.id);
+    setError("");
+    try {
+      const updated = await apiClient.recheckControllerAudio(controller.id);
+      setControllers((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item)),
+      );
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setRecheckingAudioId(null);
     }
   }
 
@@ -320,6 +336,18 @@ function App() {
                       <span>
                         {(controller.ledCounts || []).join(" / ") || "215"} LEDs
                       </span>
+                      <span
+                        className={`audio-state ${controller.audioAvailable === true ? "available" : ""}`}
+                        title="Whether this controller currently advertises audio telemetry support"
+                      >
+                        <i />
+                        Audio:{" "}
+                        {controller.audioAvailable === true
+                          ? "available"
+                          : controller.audioAvailable === false
+                            ? "unavailable"
+                            : "unknown"}
+                      </span>
                     </div>
                     <div className="row-actions">
                       <button
@@ -333,6 +361,17 @@ function App() {
                           : controller.connected
                             ? "Disconnect"
                             : "Connect"}
+                      </button>
+                      <button
+                        className="icon-action"
+                        type="button"
+                        onClick={() => handleRecheckAudio(controller)}
+                        disabled={recheckingAudioId === controller.id}
+                        title="Re-probe this controller for audio telemetry support - useful if it missed the check right after a reboot (e.g. an OTA update)"
+                      >
+                        {recheckingAudioId === controller.id
+                          ? "Checking..."
+                          : "Recheck Audio"}
                       </button>
                       <button
                         className="icon-action"

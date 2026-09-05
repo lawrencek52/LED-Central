@@ -125,7 +125,8 @@ body::after {
   font-size: 12px;
 }
 .status-dot,
-.connection-state i {
+.connection-state i,
+.audio-state i {
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -135,11 +136,16 @@ body::after {
     0 0 16px rgba(255, 207, 64, 0.55);
 }
 .status-dot.is-ready,
-.connection-state.online i {
+.connection-state.online i,
+.audio-state.available i {
   background: var(--green);
   box-shadow:
     0 0 0 6px rgba(57, 255, 136, 0.1),
     0 0 16px rgba(57, 255, 136, 0.55);
+}
+.audio-state:not(.available) i {
+  background: var(--muted);
+  box-shadow: none;
 }
 .refresh-button,
 .icon-action,
@@ -696,6 +702,20 @@ h3 {
   color: var(--green);
 }
 .connection-state i {
+  width: 7px;
+  height: 7px;
+  box-shadow: none;
+}
+.audio-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.audio-state.available {
+  color: var(--green);
+}
+.audio-state i {
   width: 7px;
   height: 7px;
   box-shadow: none;

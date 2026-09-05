@@ -79,6 +79,8 @@ export const apiClient = {
     request(`/controllers/${id}/connect`, { method: "POST" }),
   disconnectController: (id) =>
     request(`/controllers/${id}/disconnect`, { method: "POST" }),
+  recheckControllerAudio: (id) =>
+    request(`/controllers/${id}/recheck-audio`, { method: "POST" }),
   deleteController: (id) => request(`/controllers/${id}`, { method: "DELETE" }),
   listCanvases: () => request("/canvases"),
   createCanvas: (canvas) =>

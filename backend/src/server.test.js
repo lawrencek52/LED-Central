@@ -90,3 +90,37 @@ test('connects and disconnects a controller through the gateway', async t => {
   assert.equal(disconnected.body.connected, false);
   assert.deepEqual(calls, [['connect', 'deck1'], ['disconnect', 'deck1']]);
 });
+
+test('re-probes a controller for audio support on demand', async t => {
+  const controllerService = new (class {
+    constructor() {
+      this.controller = {
+        id: 'deck1', name: 'Deck', host: 'deck1.local', port: 49152, connected: false,
+        strips: 4, ledCounts: [215, 215, 215, 215], audioAvailable: false, audioCheckedAt: null,
+        lastSeen: '2026-01-01T00:00:00.000Z'
+      };
+    }
+    get(id) { return id === this.controller.id ? this.controller : undefined; }
+    setAudioAvailability(id, { available, checkedAt }) {
+      this.controller = { ...this.controller, id, audioAvailable: available, audioCheckedAt: checkedAt ?? this.controller.audioCheckedAt };
+      return this.controller;
+    }
+  })();
+  const calls = [];
+  const gateway = {
+    probeAudioSupport: async controller => { calls.push(controller.id); return true; },
+    getStatus: async () => ({ connected: false }),
+    getAudioStatus: () => ({ available: true, checkedAt: Date.now() })
+  };
+  const server = createServer(createApp({ controllerService, gateway })).listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => server.close());
+
+  const rechecked = await request(server, '/api/controllers/deck1/recheck-audio', { method: 'POST' });
+  assert.equal(rechecked.status, 200);
+  assert.equal(rechecked.body.audioAvailable, true);
+  assert.deepEqual(calls, ['deck1']);
+
+  const missing = await request(server, '/api/controllers/missing/recheck-audio', { method: 'POST' });
+  assert.equal(missing.status, 404);
+});

@@ -156,6 +156,27 @@ export function createControllerRouter({ controllerService, gateway }) {
     });
   });
 
+  router.post("/:id/recheck-audio", async (req, res, next) => {
+    const controller = controllerService.get(req.params.id);
+    if (!controller)
+      return next(
+        Object.assign(new Error("Controller not found"), { statusCode: 404 }),
+      );
+    try {
+      const available = await gateway.probeAudioSupport(controller);
+      const updated = controllerService.setAudioAvailability(controller.id, {
+        available,
+      });
+      return res.json({
+        ...updated,
+        connected: (await gateway.getStatus(controller.id)).connected,
+        audioAvailable: gateway.getAudioStatus(controller.id).available,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   router.post("/:id/connect", async (req, res, next) => {
     const controller = controllerService.get(req.params.id);
     if (!controller)
