@@ -6,22 +6,28 @@ const DEFAULT_BAND_COUNT = 16; // matches the firmware's fixed RAW_BAND_COUNT (M
 const AUDIO_DYNAMIC_RANGE_DB = 64;
 
 // Calibrates `rawBands` (unbounded RMS FFT magnitude, see below) to a
-// 0..1-ish linear amplitude where 1.0 == 0dB/full-scale. Derived from the
-// firmware's own sampling math (soundanalyzer.cpp): int16 samples (max
-// 32767) over a MAX_SAMPLES=256 Hann-windowed FFT give a single dominant
-// bin a magnitude of roughly amplitude * MAX_SAMPLES/2 * 0.5 (Hann coherent
-// gain) = 32767 * 64 ~= 2.1M for a full-scale tone; a raw band's RMS over
-// several bins reads lower than that for a narrowband signal. This is a
-// starting point, not a lab-calibrated constant - tune it against the real
-// display while testing, which is also why it's a plain constructor
-// parameter rather than buried in the math below.
-const DEFAULT_REFERENCE_MAGNITUDE = 2_000_000;
+// 0..1-ish linear amplitude where 1.0 == 0dB/full-scale. The base value is
+// derived from the firmware's own sampling math (soundanalyzer.cpp): int16
+// samples (max 32767) over a MAX_SAMPLES=256 Hann-windowed FFT give a single
+// dominant bin a magnitude of roughly amplitude * MAX_SAMPLES/2 * 0.5 (Hann
+// coherent gain) = 32767 * 64 ~= 2.1M for a full-scale tone; a raw band's
+// RMS over several bins reads lower than that for a narrowband signal. On
+// top of that starting point, testing against the real display on 2026-09-05
+// found it needed to be 10dB less sensitive (the baseline pushed up so the
+// top of the display's range demands 10dB more actual signal) - hence the
+// x10^0.5 (+10dB) factor. Keep tuning this against the real hardware rather
+// than the math, which is why it's a plain constructor parameter.
+const DEFAULT_REFERENCE_MAGNITUDE = 2_000_000 * 10 ** (10 / 20); // ~6.32M, +10dB
 
 // Peak-hold marker: jumps instantly to a new peak, holds there, then falls
-// linearly ("gravity fall") rather than exponentially - matching how
-// hardware LED peak-hold meters visibly step down after the hold expires.
+// at a constant rate *in dB* (matching how loudness is actually perceived
+// and how the renderers map amplitude onto LEDs - linear in dB, not in raw
+// amplitude) rather than exponentially or linearly in amplitude - either of
+// which would look non-uniform (barely moving near the top of the range,
+// then suddenly diving near the bottom) once mapped through that same
+// dB-linear LED scale.
 const DEFAULT_PEAK_HOLD_MS = 1000;
-const DEFAULT_PEAK_DECAY_PER_SECOND = 1.2;
+const DEFAULT_PEAK_DECAY_DB_PER_SECOND = 1;
 
 // Our own AGC (fast-attack/slow-release, like a broadcast compressor),
 // off by default: with the mic's ~64dB useful range spread across 80-200+
@@ -51,8 +57,8 @@ const STALE_BEAT_SOURCE_MS = 4000;
 // firmware's own visual tuning. That pipeline is:
 //   1. Calibrate: divide by `referenceMagnitude` to get a 0..1-ish linear amplitude.
 //   2. Optional AGC (see `agcEnabled` above).
-//   3. Peak-hold: instant rise, hold, then a linear gravity-fall - like a
-//      hardware peak-hold LED.
+//   3. Peak-hold: instant rise, hold, then a constant-dB-per-second fall -
+//      like a hardware peak-hold LED.
 // Exposed as `peaks` (this tick's instantaneous level - the bar itself reads
 // live, un-damped, the way a spectrum display should) and `peaksDecayed` (the
 // peak-hold marker), the same field names/shapes the renderers already expect.
@@ -67,7 +73,7 @@ export class CanvasAudioService {
     referenceMagnitude = DEFAULT_REFERENCE_MAGNITUDE,
     dynamicRangeDb = AUDIO_DYNAMIC_RANGE_DB,
     peakHoldMs = DEFAULT_PEAK_HOLD_MS,
-    peakDecayPerSecond = DEFAULT_PEAK_DECAY_PER_SECOND,
+    peakDecayDbPerSecond = DEFAULT_PEAK_DECAY_DB_PER_SECOND,
     agcEnabled = DEFAULT_AGC_ENABLED,
     agcTargetFraction = DEFAULT_AGC_TARGET_FRACTION,
     agcAttackRatePerSecond = DEFAULT_AGC_ATTACK_PER_SECOND,
@@ -82,7 +88,7 @@ export class CanvasAudioService {
     this.referenceMagnitude = referenceMagnitude;
     this.dynamicRangeDb = dynamicRangeDb;
     this.peakHoldMs = peakHoldMs;
-    this.peakDecayPerSecond = peakDecayPerSecond;
+    this.peakDecayDbPerSecond = peakDecayDbPerSecond;
     this.agcEnabled = agcEnabled;
     // The linear-amplitude equivalent of sitting at `agcTargetFraction` of the
     // way up the dB display range (e.g. 0.5 -> -32dB -> ~0.0251 amplitude),
@@ -235,9 +241,15 @@ export class CanvasAudioService {
 
   // Advances the peak-hold marker toward this tick's per-band level: an
   // instant rise on a new peak, then it holds at that level for `peakHoldMs`
-  // before falling linearly ("gravity fall") at `peakDecayPerSecond` - the
+  // before falling at a constant rate *in dB* (`peakDecayDbPerSecond`) - the
   // classic hardware peak-hold LED behavior, unlike `peaks` itself (the bar),
-  // which reads live every tick with no damping.
+  // which reads live every tick with no damping. Falling at a constant dB
+  // rate (i.e. a constant multiplicative factor per second in this linear
+  // amplitude domain) is what makes it move down the LED strip at a constant
+  // *visual* rate - the renderers map amplitude onto LEDs linearly in dB, so
+  // a linear-amplitude (or exponential-in-dB) fall would look non-uniform:
+  // barely moving near the top of the range, then suddenly diving near the
+  // bottom.
   //
   // Decay only counts the portion of [state.lastUpdateAt, now] that falls
   // after the hold deadline (peakHeldAt + peakHoldMs) - using the full
@@ -255,7 +267,8 @@ export class CanvasAudioService {
       const holdDeadline = state.peakHeldAt[i] + this.peakHoldMs;
       const decaySeconds = Math.max(0, (now - Math.max(state.lastUpdateAt, holdDeadline)) / 1000);
       if (decaySeconds > 0) {
-        state.peakHold[i] = Math.max(0, state.peakHold[i] - decaySeconds * this.peakDecayPerSecond);
+        const decayFactor = 10 ** (-(this.peakDecayDbPerSecond * decaySeconds) / 20);
+        state.peakHold[i] *= decayFactor;
       }
     }
   }

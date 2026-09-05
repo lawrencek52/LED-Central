@@ -1057,10 +1057,17 @@ const renderers = {
   // threading above) - assign several `layout: 'parallel'` strips to this
   // effect to build a physical multi-band VU wall. The live level bar is the
   // *average* of the strip's band group (a steadier amplitude reading), while
-  // the slowly-decaying peak-hold marker (from CanvasAudioService's
-  // peaksDecayed, gain-corrected by its AGC) takes the *max* across the same
-  // group, so a spike in any one band within the group still registers.
-  "spectrum-band": ({ width, height, parameters }) => {
+  // the peak-hold marker (from CanvasAudioService's peaksDecayed) takes the
+  // *max* across the same group, so a spike in any one band still registers.
+  //
+  // One of this effect's original goals was for the level bar to actually be
+  // the Fire effect rather than a static per-position gradient - so instead
+  // of a solid color ramp, a real fire automaton (the same one `fire` uses)
+  // burns continuously across the *entire* strip, and the live level just
+  // masks how much of it is currently visible, like a curtain sliding down
+  // over an always-lit flame. That keeps the flicker/texture alive at any
+  // level instead of freezing into a flat gradient.
+  "spectrum-band": ({ width, height, parameters, timestamp }) => {
     const audio = parameters.audio;
     const peaks = audio?.peaks ?? [];
     const peaksDecayed = audio?.peaksDecayed ?? [];
@@ -1071,11 +1078,39 @@ const renderers = {
     );
     const level = amplitudeToDbFraction(clamp(average(peaks.slice(bandStart, bandEnd)), 0, 1));
     const peak = amplitudeToDbFraction(clamp(maxOf(peaksDecayed.slice(bandStart, bandEnd)), 0, 1));
-    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const litCount = Math.round(level * width);
+
+    const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    const cooling = 3;
+    const sparking = 100;
+    const sparks = 3;
+    const sparkHeight = 4;
+    const heat = simulateFireHeat({
+      cellCount: width,
+      elapsedSeconds,
+      seedSalt: 47 + Number(parameters.randomSeed ?? 0),
+      step: (h, rng) => {
+        for (let i = 0; i < width; i += 1) {
+          const coolAmount = Math.floor(rng() * cooling);
+          h[i] = Math.max(0, h[i] - coolAmount);
+        }
+        for (let i = 0; i < width; i += 1) {
+          const a = h[(i + 1) % width];
+          const b = h[(i + 2) % width];
+          h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
+        }
+        for (let s = 0; s < sparks; s += 1) {
+          if (rng() * 255 < sparking) {
+            const y = width - 1 - Math.floor(rng() * sparkHeight);
+            if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
+          }
+        }
+      },
+    });
+
+    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     for (let i = 0; i < litCount; i += 1) {
-      const heat = Math.round((i / Math.max(1, width - 1)) * 255);
-      setPixelAllRows(pixels, width, height, i, heatToFireColor(heat));
+      setPixelAllRows(pixels, width, height, i, heatToFireColor(heat[i]));
     }
     const peakPixel = Math.round(peak * width) - 1;
     if (peakPixel >= 0) {

@@ -544,7 +544,7 @@ export const defaultEffects = [
     id: "spectrum-band",
     name: "Spectrum Band (per-strip)",
     description:
-      "One group of frequency bands per parallel strip mapping - the level bar shows the group's average amplitude while a peak-hold marker tracks the group's loudest band, briefly holding before falling. Assign several parallel strips to build a multi-band VU wall.",
+      "One group of frequency bands per parallel strip mapping - the level bar is a real flickering fire (not a static gradient) whose extent shows the group's average amplitude, while a peak-hold marker tracks the group's loudest band, briefly holding before falling. Assign several parallel strips to build a multi-band VU wall.",
     renderer: "spectrum-band",
     parameters: {},
     tags: ["animated", "audio"],
