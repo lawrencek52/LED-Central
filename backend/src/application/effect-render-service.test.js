@@ -219,7 +219,7 @@ test("spectrum-bars draws taller bars for louder bands, linear in dB", () => {
   assert.ok(litRowsInColumn(6) > litRowsInColumn(4));
 });
 
-test("spectrum-bars draws a white peak-hold cap above the live bar when it's fallen since the peak", () => {
+test("spectrum-bars draws a red peak-hold cap above the live bar when it's fallen since the peak", () => {
   const service = new EffectRenderService();
   const canvas = { width: 4, height: 4 };
   const frame = service.render({
@@ -230,8 +230,22 @@ test("spectrum-bars draws a white peak-hold cap above the live bar when it's fal
     parameters: { audio: { bandCount: 1, peaks: [0.001], peaksDecayed: [1] } },
   });
   const column = Array.from({ length: 4 }, (_, y) => frame.pixels[y * 4]);
-  assert.deepEqual(column[0], [255, 255, 255]); // top row: the peak-hold cap
+  assert.deepEqual(column[0], [255, 0, 0]); // top row: the peak-hold cap
   assert.ok(column.slice(1).every((pixel) => pixel.every((channel) => channel === 0)));
+});
+
+test("spectrum-bars widens the peak-hold cap to 2 pixels once the strip is over 100 LEDs", () => {
+  const service = new EffectRenderService();
+  const canvas = { width: 4, height: 120 };
+  const frame = service.render({
+    effect: { renderer: "spectrum-bars", parameters: { bandCount: { default: 1 } } },
+    canvas,
+    parameters: { audio: { bandCount: 1, peaks: [0], peaksDecayed: [1] } },
+  });
+  const column = Array.from({ length: 120 }, (_, y) => frame.pixels[y * 4]);
+  assert.deepEqual(column[0], [255, 0, 0]);
+  assert.deepEqual(column[1], [255, 0, 0]);
+  assert.ok(column.slice(2).every((pixel) => pixel.every((channel) => channel === 0)));
 });
 
 test("musical-fire renders valid pixels with and without a recent beat", () => {
@@ -284,15 +298,31 @@ test("spectrum-band lights a fire-driven level bar plus a separate peak-hold mar
   // linear amplitude, so 0.3 (-10.5dB) lights 8 of 10 pixels and 0.8 (-1.9dB,
   // near full scale) puts the peak marker at the very end. The lit pixels
   // are a live fire simulation rather than a static gradient, so their exact
-  // colors vary - only the boundary (dark above the level, white at the
-  // peak) and general shape are asserted.
+  // colors vary - only the boundary (dark above the level, red at the peak)
+  // and general shape are asserted.
   assert.deepEqual(frame.pixels[8], [0, 0, 0]); // just above the lit range
-  assert.deepEqual(frame.pixels[9], [255, 255, 255]); // the peak-hold marker
+  assert.deepEqual(frame.pixels[9], [255, 0, 0]); // the peak-hold marker
   frame.pixels.slice(0, 8).forEach(assertValidRgb);
   assert.ok(
     frame.pixels.slice(0, 8).some((pixel) => pixel.some(Boolean)),
     "the fire should actually be lit somewhere within the level bar",
   );
+});
+
+test("spectrum-band widens the peak-hold marker to 2 pixels once the strip is over 100 LEDs", () => {
+  const service = new EffectRenderService();
+  const canvas = { width: 120, height: 1 };
+  const frame = service.render({
+    effect: { renderer: "spectrum-band", parameters: {} },
+    canvas,
+    parameters: { timeSeconds: 5, audio: { peaks: [0], peaksDecayed: [1] } },
+    timestamp: 5000,
+  });
+  // Full-scale peak -> marker at the last index, widened one pixel toward
+  // the base so it never runs off the strip's end.
+  assert.deepEqual(frame.pixels[119], [255, 0, 0]);
+  assert.deepEqual(frame.pixels[118], [255, 0, 0]);
+  assert.deepEqual(frame.pixels[117], [0, 0, 0]);
 });
 
 test("assigns each parallel strip its own contiguous bandIndex for spectrum-band", () => {
@@ -317,7 +347,7 @@ test("assigns each parallel strip its own contiguous bandIndex for spectrum-band
   // Strip 0 (row 0) gets bandIndex 0 (full level + peak marker, on a live
   // fire rather than a static gradient); strip 1 (row 1) gets bandIndex 1,
   // whose band is silent, so it stays dark.
-  assert.deepEqual(frame.pixels[3], [255, 255, 255]); // peak marker at full scale
+  assert.deepEqual(frame.pixels[3], [255, 0, 0]); // peak marker at full scale
   frame.pixels.slice(0, 3).forEach(assertValidRgb);
   assert.ok(frame.pixels.slice(0, 3).some((pixel) => pixel.some(Boolean)));
   assert.deepEqual(frame.pixels.slice(4, 8), [
@@ -361,7 +391,7 @@ test("groups multiple telemetry bands per strip: level averages the group, peak 
   // 3 of 4 pixels lit (on a live fire, not a static gradient), plus a peak
   // marker at index 3 for the group's max (0.9, -0.9dB, near full scale).
   // The other 3 strips' band groups are silent.
-  assert.deepEqual(frame.pixels[3], [255, 255, 255]);
+  assert.deepEqual(frame.pixels[3], [255, 0, 0]);
   frame.pixels.slice(0, 3).forEach(assertValidRgb);
   assert.ok(frame.pixels.slice(0, 3).some((pixel) => pixel.some(Boolean)));
   for (let row = 1; row < 4; row += 1) {

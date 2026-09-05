@@ -955,8 +955,9 @@ const renderers = {
   // (spectrumeffects.h): one bar per frequency band across a single strip or
   // matrix row. `peaks` (live, undamped) drives the bar itself so it tracks
   // the music in real time; `peaksDecayed` (CanvasAudioService's peak-hold
-  // marker - instant rise, hold, then a gravity-fall) draws a single bright
-  // cap pixel above it, like a hardware peak-hold LED spectrum analyzer.
+  // marker - instant rise, hold, then a constant-dB-per-second fall) draws a
+  // red cap above it (2 pixels wide on a strip over 100 LEDs), like a
+  // hardware peak-hold LED spectrum analyzer.
   "spectrum-bars": ({ width, height, parameters }) => {
     const audio = parameters.audio;
     const bandCount = Math.max(
@@ -979,8 +980,10 @@ const renderers = {
           const heat = Math.round((row / Math.max(1, height - 1)) * 255);
           pixels[(height - 1 - row) * width + x] = heatToFireColor(heat);
         }
-        if (peakRow >= barHeight && peakRow < height) {
-          pixels[(height - 1 - peakRow) * width + x] = [255, 255, 255];
+        for (const row of peakMarkerPositions(peakRow, height)) {
+          if (row >= barHeight && row < height) {
+            pixels[(height - 1 - row) * width + x] = PEAK_MARKER_COLOR;
+          }
         }
       }
     }
@@ -1113,8 +1116,8 @@ const renderers = {
       setPixelAllRows(pixels, width, height, i, heatToFireColor(heat[i]));
     }
     const peakPixel = Math.round(peak * width) - 1;
-    if (peakPixel >= 0) {
-      setPixelAllRows(pixels, width, height, peakPixel, [255, 255, 255]);
+    for (const index of peakMarkerPositions(peakPixel, width)) {
+      setPixelAllRows(pixels, width, height, index, PEAK_MARKER_COLOR);
     }
     return pixels;
   },
@@ -1169,6 +1172,26 @@ function average(values) {
 
 function maxOf(values) {
   return values.reduce((max, value) => Math.max(max, Number(value ?? 0)), 0);
+}
+
+// Peak-hold markers (spectrum-bars, spectrum-band) render red rather than
+// heat-palette white, so they read as a distinct indicator against the fire
+// colors underneath rather than blending into a hot tip.
+const PEAK_MARKER_COLOR = [255, 0, 0];
+// On a strip longer than this, a single lit LED is hard to spot from a
+// distance, so the marker widens to 2 pixels.
+const WIDE_STRIP_PEAK_MARKER_LEDS = 100;
+
+// The LED index/row positions a peak-hold marker should light, given the
+// strip has `stripLength` LEDs: just `index` normally, or `index` plus the
+// one below it (toward the base, so it never runs past the strip's end at
+// full scale) once the strip is long enough that a single pixel marker
+// would be hard to see.
+function peakMarkerPositions(index, stripLength) {
+  if (index < 0) return [];
+  return stripLength > WIDE_STRIP_PEAK_MARKER_LEDS && index > 0
+    ? [index, index - 1]
+    : [index];
 }
 
 // The controllers' microphones have roughly a 64dB signal-to-noise ratio, so

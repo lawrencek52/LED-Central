@@ -12,12 +12,13 @@ const AUDIO_DYNAMIC_RANGE_DB = 64;
 // dominant bin a magnitude of roughly amplitude * MAX_SAMPLES/2 * 0.5 (Hann
 // coherent gain) = 32767 * 64 ~= 2.1M for a full-scale tone; a raw band's
 // RMS over several bins reads lower than that for a narrowband signal. On
-// top of that starting point, testing against the real display on 2026-09-05
-// found it needed to be 10dB less sensitive (the baseline pushed up so the
-// top of the display's range demands 10dB more actual signal) - hence the
-// x10^0.5 (+10dB) factor. Keep tuning this against the real hardware rather
-// than the math, which is why it's a plain constructor parameter.
-const DEFAULT_REFERENCE_MAGNITUDE = 2_000_000 * 10 ** (10 / 20); // ~6.32M, +10dB
+// top of that starting point, testing against the real display on
+// 2026-09-05 found it needed to be *more* sensitive (a lower reference
+// requires less actual signal to reach full scale) - an initial pass that
+// day moved it the wrong way (+10dB, less sensitive) and was corrected the
+// same day to -10dB. Keep tuning this against the real hardware rather than
+// the math, which is why it's a plain constructor parameter.
+const DEFAULT_REFERENCE_MAGNITUDE = 2_000_000 * 10 ** (-10 / 20); // ~632k, -10dB
 
 // Peak-hold marker: jumps instantly to a new peak, holds there, then falls
 // at a constant rate *in dB* (matching how loudness is actually perceived
@@ -25,9 +26,11 @@ const DEFAULT_REFERENCE_MAGNITUDE = 2_000_000 * 10 ** (10 / 20); // ~6.32M, +10d
 // amplitude) rather than exponentially or linearly in amplitude - either of
 // which would look non-uniform (barely moving near the top of the range,
 // then suddenly diving near the bottom) once mapped through that same
-// dB-linear LED scale.
+// dB-linear LED scale. 1dB/sec (the original default) read as too slow on
+// real hardware on 2026-09-05; raised to 6dB/sec (a full 64dB range now
+// falls in ~10.7s instead of ~64s).
 const DEFAULT_PEAK_HOLD_MS = 1000;
-const DEFAULT_PEAK_DECAY_DB_PER_SECOND = 1;
+const DEFAULT_PEAK_DECAY_DB_PER_SECOND = 6;
 
 // Our own AGC (fast-attack/slow-release, like a broadcast compressor),
 // off by default: with the mic's ~64dB useful range spread across 80-200+
