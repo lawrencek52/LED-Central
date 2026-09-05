@@ -30,5 +30,6 @@
     "**/node_modules": true,
     "**/__pycache__": true
   },
-  "extensions.autoUpdate": true
+  "extensions.autoUpdate": true,
+  "idf.currentSetup": "/home/lawrence/.espressif/v6.1-beta1/esp-idf"
 }

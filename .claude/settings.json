@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ' *)",
+      "Bash(node --test src/application/canvas-audio-service.test.js)",
+      "Bash(node --test src/application/playback-service.test.js)",
+      "Bash(npm run *)",
+      "Bash(node --test src/application/effect-render-service.test.js src/application/canvas-audio-service.test.js src/application/playback-service.test.js)",
+      "Bash(node --test src/application/canvas-audio-service.test.js src/application/playback-service.test.js)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && grep -n \"Peaks\\\\b\" include/soundanalyzer.h include/websocketserver.h)",
+      "Read(//home/lawrence/Documents/NightDriver/NightDriverStrip/**)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && sed -n '1,400p' include/soundanalyzer.h)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && sed -n '400,650p' include/soundanalyzer.h)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && sed -n '140,220p' include/websocketserver.h)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && sed -n '705,940p' src/soundanalyzer.cpp)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && grep -rn \"RunSamplerPass\\\\|SendAudioData\\\\|SetAudioFPS\\\\|AUDIO_FPS\\\\|audioTaskLoop\\\\|AudioSamplerTask\\\\|xTaskCreate.*[Aa]udio\" src/ include/ 2>/dev/null | grep -v soundanalyzer)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && sed -n '250,340p' src/audioservice.cpp)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && grep -n \"SampleI2S_Modern\\\\|SampleI2S_Legacy\\\\|SamplePDM_Modern\\\\|SamplePDM_Legacy\\\\|dma_buf\\\\|i2s_channel_read\\\\|i2s_read\\\\|MAX_SAMPLES\\\\|dma_desc_num\\\\|dma_frame_num\" src/soundanalyzer.cpp | head -80)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && grep -rln \"SampleI2S_Modern\\\\|SamplePDM_Modern\" src/ include/)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && wc -l src/soundanalyzer_input_sampling.cpp && grep -n \"dma_desc_num\\\\|dma_frame_num\\\\|buf_len\\\\|i2s_channel_read\\\\|i2s_read\\\\|MAX_SAMPLES\\\\|timeout\\\\|portMAX_DELAY\\\\|xQueue\\\\|ring\" src/soundanalyzer_input_sampling.cpp)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && grep -n \"dma_desc_num\\\\|dma_frame_num\\\\|InitI2S_Modern\\\\|InitPDM_Modern\\\\|i2s_chan_config_t\\\\|dma_alignment\\\\|auto_clear\" src/soundanalyzer_input_sampling.cpp src/*.cpp include/*.h 2>/dev/null | head -60)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && grep -n \"energyEnvDecay\\\\|energyNoiseAdapt\\\\|energyNoiseDecay\\\\|quietEnvFloorGate\\\\|frameSNRGate\\\\|compressGamma\\\\|liveAttackPerSec\\\\|bandFloor\\\\|kBandFloorMin\\\\|kBandFloorScale\\\\|_energyMaxEnv\\\\|_noiseFloor\\\\[b\\\\]\" src/soundanalyzer.cpp)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && grep -n \"energyEnvDecay\\\\|energyNoiseAdapt\\\\|catches up\\\\|pins the auto-gain\\\\|takes ~3s\\\\|0.90 is\" include/soundanalyzer.h)",
+      "Bash(cd /home/lawrence/Documents/NightDriver/NightDriverStrip && sed -n '160,180p' include/soundanalyzer.h)",
+      "Read(//home/lawrence/Documents/NightDriver/NightDriverStrip/include/**)",
+      "Bash(grep -n \"ProcessPeaksEnergy\\\\|_Peaks\\\\b\\\\|PeakData\\\\|class ISoundAnalyzer\\\\|virtual.*Peaks\\\\|_noiseFloor\\\\|_energyMaxEnv\\\\|Peak1Decay\\\\|Peak2Decay\" /home/lawrence/Documents/NightDriver/NightDriverStrip/include/soundanalyzer.h)",
+      "Read(//home/lawrence/Documents/NightDriver/NightDriverStrip/src/**)"
+    ]
+  }
+}
