@@ -1069,19 +1069,27 @@ const renderers = {
   // burns across the strip, and the live level masks how much of it is
   // currently visible.
   //
-  // Sparks are anchored at the *visible* tip (litCount - 1), not the strip's
-  // physical end (width - 1). Cooling/diffusion only carries heat a few tens
-  // of cells from wherever it's injected within the ~3s simulation window
-  // (see simulateFireHeat), so on a long strip (200+ LEDs) at a quiet/floor
-  // level - a small litCount far from index width-1 - sparking at the far
-  // end left the visible region completely outside the fire's reach: heat
-  // never arrived, so it rendered as permanently black except for the static
-  // peak marker. That's the "frozen" display reported on 215-LED strips
-  // (216-LED firmware buffer) which never showed up on an 88-LED strip,
-  // where the same floor litCount sits close enough to width-1 for sparks to
-  // still reach it. Anchoring to the visible tip instead guarantees a spark
-  // source is always exactly where the flame needs to be seen, regardless of
-  // strip length or level.
+  // Sparks stay anchored at the strip's physical end (width - 1), same as
+  // `fire`, but diffusion here feeds from *lower*-index neighbors (with
+  // wraparound) instead of higher ones, so heat flows index-upward: from the
+  // spark at width-1, one wraparound hop lands it at index 0, and from there
+  // it climbs through the visible window (0..litCount-1) toward the peak.
+  // `fire` doesn't care which direction it flows since the whole strip is
+  // always shown, but here it matters: the old higher-to-lower flow made the
+  // flame visibly travel from the peak down toward the start, backwards from
+  // a VU wall's usual "grows up from the base toward the peak" look.
+  //
+  // This direction also happens to fix a real bug the old one had: on a long
+  // strip (200+ LEDs) at a quiet/floor level - a small litCount far from
+  // index width-1 - cooling/diffusion's limited reach within the ~3s
+  // simulation window (see simulateFireHeat) meant a spark at width-1 could
+  // never reach the visible region at all, rendering it permanently black
+  // except for the static peak marker (the "frozen" display reported on
+  // 215-LED strips, never seen on an 88-LED strip where the same floor
+  // litCount sits close enough to width-1 to still be reached). Now, the
+  // wraparound hop from width-1 lands directly at index 0 - one step away
+  // from the visible window's own start - so the flame reaches it at any
+  // litCount, long strip or short.
   "spectrum-band": ({ width, height, parameters, timestamp }) => {
     const audio = parameters.audio;
     const peaks = audio?.peaks ?? [];
@@ -1100,7 +1108,6 @@ const renderers = {
     const sparking = 100;
     const sparks = 3;
     const sparkHeight = 4;
-    const sparkTip = Math.max(0, litCount - 1);
     const heat = simulateFireHeat({
       cellCount: width,
       elapsedSeconds,
@@ -1111,13 +1118,13 @@ const renderers = {
           h[i] = Math.max(0, h[i] - coolAmount);
         }
         for (let i = 0; i < width; i += 1) {
-          const a = h[(i + 1) % width];
-          const b = h[(i + 2) % width];
+          const a = h[(i - 1 + width) % width];
+          const b = h[(i - 2 + width) % width];
           h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
         }
         for (let s = 0; s < sparks; s += 1) {
           if (rng() * 255 < sparking) {
-            const y = sparkTip - Math.floor(rng() * sparkHeight);
+            const y = width - 1 - Math.floor(rng() * sparkHeight);
             if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
           }
         }
