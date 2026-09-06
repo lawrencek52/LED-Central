@@ -189,6 +189,34 @@ export class CanvasAudioService {
     });
   }
 
+  // Whether this canvas can run an audio-reactive effect at all - distinct
+  // from `getCanvasAudio(canvas).available` above, which is about whether
+  // telemetry happens to be flowing in the last `STALE_TELEMETRY_MS` (i.e.
+  // whether there's live data to render *right now*). This is the single
+  // source of truth for capability: it reads the same sticky per-controller
+  // flag the Controllers tab shows (`telemetrySource.getAudioStatus`, set by
+  // an explicit `/statistics/static` probe, not by moment-to-moment telemetry
+  // liveness) and ORs it across every controller mapped to the canvas - one
+  // audio-capable controller is enough to run the whole canvas, even if the
+  // others aren't audio-capable or are briefly offline.
+  //
+  // Before this existed, the Effects tab and playback's own "can this start"
+  // check both used the liveness-based `available` instead, computed
+  // independently from the Controllers tab's capability flag - so a telemetry
+  // hiccup affecting every controller on a canvas at once (a shared Wi-Fi
+  // blip, a controller reboot) could make the Effects tab falsely report "no
+  // audio" while the Controllers tab still correctly showed the hardware as
+  // capable, with nothing to reconcile the two.
+  hasAudioCapability(canvas) {
+    return this.controllerIdsFor(canvas).some(
+      // `available` is tri-state ("unknown" before the first probe, or a real
+      // true/false after) - strict-equal true rather than a truthy check, or
+      // an unprobed controller's "unknown" string would count as capable.
+      (controllerId) =>
+        this.telemetrySource.getAudioStatus?.(controllerId)?.available === true,
+    );
+  }
+
   // The fastest rate any currently-live controller on this canvas is actually
   // pushing telemetry at - playback for audio-tagged effects paces its render
   // rate off this instead of a fixed default, so it neither over-renders

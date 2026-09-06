@@ -75,7 +75,7 @@ export class PlaybackService {
     const effect = this.effectService.get(effectId);
     if (!canvas) throw new EffectRenderError("Canvas not found", 404);
     if (!effect) throw new EffectRenderError("Effect not found", 404);
-    if (this.requiresAudio(effect) && !this.audioService?.getCanvasAudio(canvas)?.available) {
+    if (this.requiresAudio(effect) && !this.audioService?.hasAudioCapability(canvas)) {
       throw new EffectRenderError(
         "Canvas has no audio-capable controllers currently available",
         400,

@@ -98,7 +98,7 @@ export function createCanvasRouter({
   function withAudio(canvas) {
     return {
       ...canvas,
-      audioAvailable: audioService ? audioService.getCanvasAudio(canvas).available : false,
+      audioAvailable: audioService ? audioService.hasAudioCapability(canvas) : false,
     };
   }
   router.put("/:id", (req, res, next) => {

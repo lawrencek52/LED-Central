@@ -36,7 +36,10 @@ test("rejects starting an audio-tagged effect when no canvas audio is available"
   const service = new PlaybackService({
     ...baseServiceOptions(),
     distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
-    audioService: { getCanvasAudio: () => ({ available: false }) },
+    audioService: {
+      getCanvasAudio: () => ({ available: false }),
+      hasAudioCapability: () => false,
+    },
   });
   await assert.rejects(
     service.start({ canvasId: "canvas-1", effectId: "vu-meter" }),
@@ -56,6 +59,7 @@ test("injects live canvas audio into an audio-tagged effect's parameters", async
     },
     audioService: {
       getCanvasAudio: () => ({ available: true, vuRatioFade: 2, lastBeatAt: null }),
+      hasAudioCapability: () => true,
     },
     idFactory: () => "session-1",
     now: () => 1700000000000,
@@ -75,6 +79,7 @@ test("paces an audio-tagged effect to the measured telemetry rate instead of the
     distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
     audioService: {
       getCanvasAudio: () => ({ available: true }),
+      hasAudioCapability: () => true,
       getUpdateRateHz: () => 45,
     },
     frameRate: 20,
@@ -103,6 +108,7 @@ test("falls back to the default frame rate when telemetry rate can't be measured
     distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
     audioService: {
       getCanvasAudio: () => ({ available: true }),
+      hasAudioCapability: () => true,
       getUpdateRateHz: () => 0,
     },
     frameRate: 20,
@@ -117,7 +123,10 @@ test("uses a much shorter frame lookahead for audio-tagged effects than the defa
   const service = new PlaybackService({
     ...baseServiceOptions(),
     distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
-    audioService: { getCanvasAudio: () => ({ available: true }) },
+    audioService: {
+      getCanvasAudio: () => ({ available: true }),
+      hasAudioCapability: () => true,
+    },
     frameRate: 20,
     targetQueueMs: 1500,
     audioQueueFrames: 2,

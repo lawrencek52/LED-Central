@@ -2,11 +2,59 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { CanvasAudioService } from "./canvas-audio-service.js";
 
-function makeTelemetrySource(telemetryByController) {
+function makeTelemetrySource(telemetryByController, audioStatusByController = new Map()) {
   return {
     getAudioTelemetry: (controllerId) => telemetryByController.get(controllerId) ?? null,
+    getAudioStatus: (controllerId) =>
+      audioStatusByController.get(controllerId) ?? { available: false },
   };
 }
+
+test("hasAudioCapability is true if any controller mapped to the canvas is audio-capable, even with no live telemetry", () => {
+  const service = new CanvasAudioService({
+    telemetrySource: makeTelemetrySource(
+      new Map(),
+      new Map([
+        ["deck-1", { available: false }],
+        ["deck-2", { available: true }],
+      ]),
+    ),
+    now: () => 1000,
+  });
+  const canvas = {
+    id: "canvas-1",
+    mappings: [{ controllerId: "deck-1" }, { controllerId: "deck-2" }],
+  };
+  // No telemetry at all is queued up (getCanvasAudio would report unavailable
+  // here), but capability doesn't depend on live telemetry - only on whether
+  // any mapped controller's own audio hardware has been probed as present.
+  assert.equal(service.getCanvasAudio(canvas).available, false);
+  assert.equal(service.hasAudioCapability(canvas), true);
+});
+
+test("hasAudioCapability treats an unprobed controller's 'unknown' status as not capable, not as truthy", () => {
+  const service = new CanvasAudioService({
+    telemetrySource: makeTelemetrySource(
+      new Map(),
+      new Map([["deck-1", { available: "unknown" }]]),
+    ),
+    now: () => 1000,
+  });
+  const canvas = { id: "canvas-1", mappings: [{ controllerId: "deck-1" }] };
+  assert.equal(service.hasAudioCapability(canvas), false);
+});
+
+test("hasAudioCapability is false when no controller mapped to the canvas is audio-capable", () => {
+  const service = new CanvasAudioService({
+    telemetrySource: makeTelemetrySource(
+      new Map(),
+      new Map([["deck-1", { available: false }]]),
+    ),
+    now: () => 1000,
+  });
+  const canvas = { id: "canvas-1", mappings: [{ controllerId: "deck-1" }] };
+  assert.equal(service.hasAudioCapability(canvas), false);
+});
 
 test("reports unavailable when no controller on the canvas has telemetry", () => {
   const service = new CanvasAudioService({
