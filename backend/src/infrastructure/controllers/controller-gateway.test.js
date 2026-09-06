@@ -102,6 +102,42 @@ test("TCP gateway shares one connection for concurrent sends", async (t) => {
   gateway.disconnect(controller.id);
 });
 
+test("TCP gateway sends each strip channel over its own connection", async (t) => {
+  const connections = [];
+  const deviceServer = net.createServer((socket) => {
+    const received = [];
+    connections.push({ socket, received });
+    socket.on("data", (data) => received.push(data));
+  });
+  deviceServer.listen(0, "127.0.0.1");
+  await new Promise((resolve) => deviceServer.once("listening", resolve));
+  t.after(() => {
+    for (const { socket } of connections) socket.destroy();
+    deviceServer.close();
+  });
+
+  const gateway = new TcpControllerGateway({ connectionTimeoutMs: 1000 });
+  const controller = {
+    id: "controller-1",
+    host: "127.0.0.1",
+    port: deviceServer.address().port,
+  };
+  const frameA = { timestamp: 1000, channelMask: 1, pixels: [[255, 0, 0]] };
+  const frameB = { timestamp: 1000, channelMask: 2, pixels: [[0, 255, 0]] };
+
+  // Two strips (channels) rendered for the same tick must not share a
+  // connection - a stall on one strip's socket would otherwise freeze every
+  // other strip on the same controller behind it in one shared FIFO.
+  await gateway.sendFrames(controller, [frameA, frameB]);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(connections.length, 2);
+  const payloads = connections.map(({ received }) => Buffer.concat(received));
+  assert.ok(payloads.some((buf) => buf.equals(encodePixelFrame(frameA))));
+  assert.ok(payloads.some((buf) => buf.equals(encodePixelFrame(frameB))));
+  gateway.disconnect(controller.id);
+});
+
 test("TCP gateway measures the audio telemetry rate from recent message timestamps", () => {
   const gateway = new TcpControllerGateway();
   const now = Date.now();

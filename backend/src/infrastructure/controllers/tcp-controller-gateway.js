@@ -17,8 +17,23 @@ export class TcpControllerGateway {
     this.audioStates = new Map();
   }
 
-  async connect(controller) {
-    const existing = this.connections.get(controller.id);
+  // Connections are keyed per (controller, channel) rather than per controller
+  // alone, so each strip gets its own TCP connection. The firmware's
+  // SocketServer already multiplexes independent clients (MAX_CLIENTS =
+  // NUM_CHANNELS + 2, see socketserver.h) - one connection per channel lets a
+  // stall reading/acking one strip's frames (seen live on 2026-09-06: ~1.5-2%
+  // of writes stalling 100ms-1.6s, plausibly a WiFi-side hiccup rather than a
+  // firmware one) freeze just that strip instead of blocking every other
+  // strip on the same controller behind it in one shared FIFO. `channelKey`
+  // defaults to a "probe" pseudo-channel for plain connectivity checks
+  // (startup bring-up, manual reconnect) that aren't tied to any strip.
+  connectionKey(controllerId, channelKey) {
+    return `${controllerId}::${channelKey}`;
+  }
+
+  async connect(controller, channelKey = "probe") {
+    const key = this.connectionKey(controller.id, channelKey);
+    const existing = this.connections.get(key);
     if (
       existing?.readyState === "open" &&
       !existing.destroyed &&
@@ -27,7 +42,7 @@ export class TcpControllerGateway {
       return existing;
     }
 
-    const pending = this.connectionPromises.get(controller.id);
+    const pending = this.connectionPromises.get(key);
     if (pending) return pending;
 
     const socket = net.createConnection({
@@ -40,34 +55,26 @@ export class TcpControllerGateway {
     // itself" - see NightDriverStrip's SendResponsePacket) - not currently
     // parsed/used for pacing here, but it must be read regardless: left in
     // Node's default paused mode (no 'data' listener), those bytes just
-    // accumulate unread. Investigating a real slowdown on 2026-09-06 (under
-    // sustained ~45Hz delivery from continuous music, individual pixel-frame
-    // writes were taking 300-900ms - should be sub-millisecond on a LAN),
-    // draining here brought that down to 150-600ms but didn't eliminate it -
-    // so this is a legitimate protocol-compliance fix and a real partial
-    // improvement, not the whole story. The remaining slowness pointed at
-    // the firmware's own task scheduling under combined audio+socket load
-    // (CPU wasn't saturated, but LED_FPS dropped well below the audio rate),
-    // which needs to be chased on the NightDriverStrip side.
+    // accumulate unread.
     socket.on("data", () => {});
-    this.connections.set(controller.id, socket);
-    this.statuses.set(controller.id, {
+    this.connections.set(key, socket);
+    this.statuses.set(key, {
       controllerId: controller.id,
       connected: false,
     });
     socket.on("error", () => {
-      if (this.connections.get(controller.id) === socket) {
-        this.connections.delete(controller.id);
-        this.statuses.set(controller.id, {
+      if (this.connections.get(key) === socket) {
+        this.connections.delete(key);
+        this.statuses.set(key, {
           controllerId: controller.id,
           connected: false,
         });
       }
     });
     socket.on("close", () => {
-      if (this.connections.get(controller.id) === socket) {
-        this.connections.delete(controller.id);
-        this.statuses.set(controller.id, {
+      if (this.connections.get(key) === socket) {
+        this.connections.delete(key);
+        this.statuses.set(key, {
           controllerId: controller.id,
           connected: false,
         });
@@ -77,7 +84,7 @@ export class TcpControllerGateway {
     const connection = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         socket.destroy();
-        this.statuses.set(controller.id, {
+        this.statuses.set(key, {
           controllerId: controller.id,
           connected: false,
         });
@@ -88,7 +95,7 @@ export class TcpControllerGateway {
 
       socket.once("connect", () => {
         clearTimeout(timeout);
-        this.statuses.set(controller.id, {
+        this.statuses.set(key, {
           controllerId: controller.id,
           connected: true,
         });
@@ -96,41 +103,63 @@ export class TcpControllerGateway {
       });
       socket.once("error", (error) => {
         clearTimeout(timeout);
-        this.statuses.set(controller.id, {
+        this.statuses.set(key, {
           controllerId: controller.id,
           connected: false,
         });
         reject(error);
       });
-    }).finally(() => this.connectionPromises.delete(controller.id));
-    this.connectionPromises.set(controller.id, connection);
+    }).finally(() => this.connectionPromises.delete(key));
+    this.connectionPromises.set(key, connection);
     return connection;
   }
 
+  // Connected if any of this controller's connections (probe or per-channel)
+  // is currently up - callers only care whether the controller is reachable
+  // at all, not which specific channel socket is open.
   getStatus(controllerId) {
-    return (
-      this.statuses.get(controllerId) ?? {
-        controllerId,
-        connected: false,
+    const prefix = this.connectionKey(controllerId, "");
+    for (const [key, status] of this.statuses) {
+      if (key.startsWith(prefix) && status.connected) {
+        return { controllerId, connected: true };
       }
-    );
+    }
+    return { controllerId, connected: false };
   }
 
   async sendFrame(controller, frame) {
     return this.sendFrames(controller, [frame]);
   }
 
+  // Frames are grouped by channel and sent concurrently, one dedicated
+  // connection and FIFO queue per channel, instead of one shared connection
+  // serializing every strip's writes. See connect() above for why.
   async sendFrames(controller, frames) {
-    const previous = this.sendQueues.get(controller.id) ?? Promise.resolve();
+    const byChannel = new Map();
+    for (const frame of frames) {
+      const channelMask = frame.channelMask ?? 1;
+      if (!byChannel.has(channelMask)) byChannel.set(channelMask, []);
+      byChannel.get(channelMask).push(frame);
+    }
+    await Promise.all(
+      [...byChannel.entries()].map(([channelMask, channelFrames]) =>
+        this.sendChannelFrames(controller, channelMask, channelFrames),
+      ),
+    );
+  }
+
+  async sendChannelFrames(controller, channelMask, frames) {
+    const key = this.connectionKey(controller.id, channelMask);
+    const previous = this.sendQueues.get(key) ?? Promise.resolve();
     const send = previous
       .catch(() => {})
       .then(async () => {
-        let socket = await this.connect(controller);
+        let socket = await this.connect(controller, channelMask);
         for (const frame of frames) {
           const packet = encodePixelFrame(frame);
           for (let attempt = 0; attempt < 2; attempt += 1) {
             if (socket.destroyed || !socket.writable) {
-              socket = await this.connect(controller);
+              socket = await this.connect(controller, channelMask);
             }
             try {
               await write(socket, packet);
@@ -139,12 +168,12 @@ export class TcpControllerGateway {
             } catch (error) {
               socket.destroy();
               if (attempt === 1) throw error;
-              socket = await this.connect(controller);
+              socket = await this.connect(controller, channelMask);
             }
           }
         }
       });
-    this.sendQueues.set(controller.id, send);
+    this.sendQueues.set(key, send);
     await send;
   }
 
@@ -367,13 +396,19 @@ export class TcpControllerGateway {
   }
 
   disconnect(controllerId) {
-    const socket = this.connections.get(controllerId);
-    if (socket) {
-      socket.end();
-      this.connections.delete(controllerId);
+    const prefix = this.connectionKey(controllerId, "");
+    for (const [key, socket] of this.connections) {
+      if (key.startsWith(prefix)) {
+        socket.end();
+        this.connections.delete(key);
+      }
     }
-    this.connectionPromises.delete(controllerId);
-    this.statuses.set(controllerId, { controllerId, connected: false });
+    for (const key of [...this.connectionPromises.keys()]) {
+      if (key.startsWith(prefix)) this.connectionPromises.delete(key);
+    }
+    for (const key of [...this.statuses.keys()]) {
+      if (key.startsWith(prefix)) this.statuses.delete(key);
+    }
   }
 }
 
