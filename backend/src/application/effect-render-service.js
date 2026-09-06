@@ -482,6 +482,14 @@ const renderers = {
     // steps (deterministic per elapsed-time bucket) instead of the whole
     // effect history, which keeps render cost constant no matter how long
     // the effect has been running.
+    //
+    // Extended 2026-09-06 for a canvas of parallel vertical strips (one row
+    // per strip, single source at index 0/near the controller, no mirrored
+    // second source): a height envelope keeps the flame from constantly
+    // reaching the far end (which otherwise reads as a second, permanently-lit
+    // source on a long strip at low cooling), and a lateral blend pass
+    // correlates neighboring rows so multiple strips read as one connected
+    // fire instead of independent, uncorrelated flames.
     const cooling = Math.max(0, Math.round(Number(parameters.cooling ?? 3)));
     const sparking = clamp(Number(parameters.sparking ?? 100), 0, 255);
     const sparks = Math.max(0, Math.round(Number(parameters.sparks ?? 3)));
@@ -493,38 +501,117 @@ const renderers = {
     const mirrored = Boolean(parameters.mirrored);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
     const ledCount = mirrored ? Math.max(1, Math.floor(width / 2)) : width;
+    const randomSeed = Number(parameters.randomSeed ?? 0);
+    const seedSalt = 11 + randomSeed;
 
-    const heat = simulateFireHeat({
-      cellCount: ledCount,
-      elapsedSeconds,
-      seedSalt: 11 + Number(parameters.randomSeed ?? 0),
-      step: (h, rng) => {
-        for (let i = 0; i < ledCount; i += 1) {
-          const coolAmount = Math.floor(rng() * cooling);
-          h[i] = Math.max(0, h[i] - coolAmount);
-        }
-        for (let i = 0; i < ledCount; i += 1) {
-          const a = h[(i + 1) % ledCount];
-          const b = h[(i + 2) % ledCount];
-          h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
-        }
-        for (let s = 0; s < sparks; s += 1) {
-          if (rng() * 255 < sparking) {
-            const y = ledCount - 1 - Math.floor(rng() * sparkHeight);
-            if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
+    const minHeightFraction = clamp(
+      Number(parameters.minHeightFraction ?? 0.2),
+      0,
+      1,
+    );
+    const maxHeightFraction = clamp(
+      Number(parameters.maxHeightFraction ?? 1),
+      0,
+      1,
+    );
+    const averageHeightFraction = clamp(
+      Number(parameters.averageHeightFraction ?? 0.7),
+      minHeightFraction,
+      maxHeightFraction,
+    );
+    const heightWaveSeconds = Math.max(
+      1,
+      Number(parameters.heightWaveSeconds ?? 25),
+    );
+    // Only matters once multiple rows (parallel strips) share this canvas.
+    const neighborBlend = clamp(Number(parameters.neighborBlend ?? 0.2), 0, 1);
+    const falloffWidth = Math.max(3, Math.round(ledCount * 0.05));
+
+    const rows = Math.max(1, height);
+    const grid = [];
+    for (let row = 0; row < rows; row += 1) {
+      const heat = simulateFireHeat({
+        cellCount: ledCount,
+        elapsedSeconds,
+        // Rows get distinct per-row randomness for cooling, diffusion and
+        // sparking, and for the height envelope's own two minor texture
+        // waves (see fireHeightFraction) - only its dominant, slowest wave
+        // stays keyed off the shared seedSalt so every row breathes together
+        // on the big cycle.
+        seedSalt: seedSalt + row * 97,
+        step: (h, rng, s, stepMs) => {
+          for (let i = 0; i < ledCount; i += 1) {
+            const coolAmount = Math.floor(rng() * cooling);
+            h[i] = Math.max(0, h[i] - coolAmount);
           }
+          for (let i = 0; i < ledCount; i += 1) {
+            const a = h[(i + 1) % ledCount];
+            const b = h[(i + 2) % ledCount];
+            h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
+          }
+          for (let spark = 0; spark < sparks; spark += 1) {
+            if (rng() * 255 < sparking) {
+              const y = ledCount - 1 - Math.floor(rng() * sparkHeight);
+              if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
+            }
+          }
+          const heightFraction = fireHeightFraction(
+            (s * stepMs) / 1000,
+            seedSalt,
+            seedSalt + row * 97,
+            {
+              min: minHeightFraction,
+              averageFraction: averageHeightFraction,
+              max: maxHeightFraction,
+              waveSeconds: heightWaveSeconds,
+            },
+          );
+          const ceilingDistance = heightFraction * ledCount;
+          for (let i = 0; i < ledCount; i += 1) {
+            const distanceFromBase = ledCount - 1 - i;
+            const over = distanceFromBase - ceilingDistance;
+            if (over > 0) {
+              h[i] = Math.floor(
+                h[i] * Math.max(0, 1 - over / falloffWidth),
+              );
+            }
+          }
+        },
+      });
+      grid.push(heat);
+    }
+
+    if (neighborBlend > 0 && rows > 1) {
+      const previous = grid.map((row) => row.slice());
+      for (let row = 0; row < rows; row += 1) {
+        const above = previous[row - 1];
+        const below = previous[row + 1];
+        const neighborCount = (above ? 1 : 0) + (below ? 1 : 0);
+        if (neighborCount === 0) continue;
+        for (let i = 0; i < ledCount; i += 1) {
+          const neighborHeat =
+            ((above ? above[i] : 0) + (below ? below[i] : 0)) / neighborCount;
+          grid[row][i] = Math.min(
+            255,
+            Math.round(
+              grid[row][i] * (1 - neighborBlend) + neighborHeat * neighborBlend,
+            ),
+          );
         }
-      },
-    });
+      }
+    }
 
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-    for (let i = 0; i < ledCount; i += 1) {
-      const color = heatToFireColor(heat[i]);
-      const j = reversed ? ledCount - 1 - i : i;
-      setPixelAllRows(pixels, width, height, j, color);
-      if (mirrored) {
-        const mirrorIndex = !reversed ? 2 * ledCount - 1 - i : ledCount + i;
-        setPixelAllRows(pixels, width, height, mirrorIndex, color);
+    for (let row = 0; row < rows; row += 1) {
+      const heat = grid[row];
+      for (let i = 0; i < ledCount; i += 1) {
+        const color = heatToFireColor(heat[i]);
+        const j = reversed ? ledCount - 1 - i : i;
+        pixels[row * width + j] = color;
+        if (mirrored) {
+          const mirrorIndex = !reversed ? 2 * ledCount - 1 - i : ledCount + i;
+          pixels[row * width + mirrorIndex] = color;
+        }
       }
     }
     return pixels;
@@ -1573,6 +1660,42 @@ function simulateFireHeat({ cellCount, elapsedSeconds, seedSalt, step }) {
     step(heat, rng, s, stepMs);
   }
   return heat;
+}
+
+// A smooth, deterministic wander between `min` and `max` that rests near
+// `averageFraction`, used by `fire` to vary how tall the flame reaches over
+// time. Built from a few incommensurate sine waves (rather than per-step
+// randomness) so the height breathes gradually - like a real fire responding
+// to slow shifts in airflow - instead of changing every frame. The mapping is
+// asymmetric around `averageFraction` so the full [min, max] range gets used
+// even though the resting point usually isn't centered between them.
+// `waveSeconds`'s own term is weighted well above the two shorter, faster
+// terms (which just add subtle texture) so the requested period actually
+// reads as one clear, dominant breath rather than being washed out by them.
+// `sharedSeed` phases that dominant term identically across every row on a
+// multi-strip canvas, so they all breathe together on the big cycle; `rowSeed`
+// phases only the two texture terms, so each strip still varies individually
+// rather than being a perfect copy of its neighbors.
+function fireHeightFraction(
+  seconds,
+  sharedSeed,
+  rowSeed,
+  { min, averageFraction, max, waveSeconds },
+) {
+  const phase = (seed, n) => (((seed * n) % 997) / 997) * Math.PI * 2;
+  const wave =
+    0.7 * Math.sin((2 * Math.PI * seconds) / waveSeconds + phase(sharedSeed, 3)) +
+    0.2 *
+      Math.sin(
+        (2 * Math.PI * seconds) / (waveSeconds * 0.37) + phase(rowSeed, 7),
+      ) +
+    0.1 *
+      Math.sin(
+        (2 * Math.PI * seconds) / (waveSeconds * 0.13) + phase(rowSeed, 13),
+      );
+  return wave >= 0
+    ? averageFraction + wave * (max - averageFraction)
+    : averageFraction + wave * (averageFraction - min);
 }
 
 function plotBlended2D(pixels, width, height, x, y, color) {

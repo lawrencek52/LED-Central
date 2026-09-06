@@ -257,6 +257,83 @@ test("spectrum-bars widens the peak-hold cap to 2 pixels once the strip is over 
   assert.deepEqual(column[2], [0, 0, 0]); // between the marker and the silence floor's own glow further down
 });
 
+function fireParameters(overrides = {}) {
+  return {
+    cooling: { default: 3 },
+    sparking: { default: 100 },
+    sparks: { default: 3 },
+    sparkHeight: { default: 4 },
+    reversed: { default: true },
+    mirrored: { default: false },
+    minHeightFraction: { default: 0.2 },
+    averageHeightFraction: { default: 0.7 },
+    maxHeightFraction: { default: 1 },
+    heightWaveSeconds: { default: 25 },
+    neighborBlend: { default: 0.2 },
+    ...overrides,
+  };
+}
+
+test("fire stays within its configured height ceiling and doesn't light the far end when unmirrored", () => {
+  const width = 40;
+  const service = new EffectRenderService();
+  const farIndex = width - 1;
+  for (const timeSeconds of [1, 4.5, 9.3, 20, 44.1]) {
+    const frame = service.render({
+      effect: {
+        renderer: "fire",
+        parameters: fireParameters({
+          minHeightFraction: { default: 0.5 },
+          averageHeightFraction: { default: 0.5 },
+          maxHeightFraction: { default: 0.5 },
+          neighborBlend: { default: 0 },
+        }),
+      },
+      canvas: { width, height: 1 },
+      parameters: { timeSeconds },
+    });
+    // The ceiling sits at 50% of the strip; the far end (display index 0 is
+    // the source, since `reversed` puts it at the strip's start) is far
+    // beyond the ceiling plus its falloff, so it must stay unlit.
+    assert.deepEqual(frame.pixels[farIndex], [0, 0, 0]);
+  }
+});
+
+test("fire blends neighboring rows together when neighborBlend is enabled", () => {
+  const width = 30;
+  const service = new EffectRenderService();
+  const frame = service.render({
+    effect: {
+      renderer: "fire",
+      parameters: fireParameters({ neighborBlend: { default: 1 } }),
+    },
+    canvas: { width, height: 3 },
+    parameters: { timeSeconds: 5 },
+  });
+  const row0 = frame.pixels.slice(0, width);
+  const row2 = frame.pixels.slice(2 * width, 3 * width);
+  // With full neighbor blending, both edge rows end up entirely derived from
+  // the middle row's pre-blend heat (each has only that one neighbor), so
+  // they must match exactly even though each row's own sparks are random.
+  assert.deepEqual(row0, row2);
+});
+
+test("fire rows are independent (not just duplicated) when neighborBlend is off", () => {
+  const width = 30;
+  const service = new EffectRenderService();
+  const frame = service.render({
+    effect: {
+      renderer: "fire",
+      parameters: fireParameters({ neighborBlend: { default: 0 } }),
+    },
+    canvas: { width, height: 3 },
+    parameters: { timeSeconds: 5 },
+  });
+  const row0 = frame.pixels.slice(0, width);
+  const row1 = frame.pixels.slice(width, 2 * width);
+  assert.notDeepEqual(row0, row1);
+});
+
 test("musical-fire renders valid pixels with and without a recent beat", () => {
   const service = new EffectRenderService();
   const canvas = { width: 20, height: 1 };
