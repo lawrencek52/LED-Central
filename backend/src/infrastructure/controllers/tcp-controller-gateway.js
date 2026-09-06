@@ -35,6 +35,21 @@ export class TcpControllerGateway {
       port: controller.port,
     });
     socket.setNoDelay(true);
+    // The firmware sends a small SocketResponse packet back on this same
+    // socket for every pixel frame it receives ("this is how it paces
+    // itself" - see NightDriverStrip's SendResponsePacket) - not currently
+    // parsed/used for pacing here, but it must be read regardless: left in
+    // Node's default paused mode (no 'data' listener), those bytes just
+    // accumulate unread. Investigating a real slowdown on 2026-09-06 (under
+    // sustained ~45Hz delivery from continuous music, individual pixel-frame
+    // writes were taking 300-900ms - should be sub-millisecond on a LAN),
+    // draining here brought that down to 150-600ms but didn't eliminate it -
+    // so this is a legitimate protocol-compliance fix and a real partial
+    // improvement, not the whole story. The remaining slowness pointed at
+    // the firmware's own task scheduling under combined audio+socket load
+    // (CPU wasn't saturated, but LED_FPS dropped well below the audio rate),
+    // which needs to be chased on the NightDriverStrip side.
+    socket.on("data", () => {});
     this.connections.set(controller.id, socket);
     this.statuses.set(controller.id, {
       controllerId: controller.id,
