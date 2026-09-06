@@ -144,6 +144,64 @@ test("nds-bouncing-balls animates via kinematics instead of freezing at position
   assert.ok(frameB.pixels.some((pixel) => pixel.some((channel) => channel)));
 });
 
+test("nds-bouncing-balls' reversed parameter mirrors which end a single source bounces from", () => {
+  const width = 30;
+  const service = new EffectRenderService();
+  const canvas = { width, height: 1 };
+  const baseParameters = {
+    ballCount: { default: 2 },
+    ballSize: { default: 2 },
+    mirrored: { default: false },
+  };
+  const forward = service.render({
+    effect: {
+      renderer: "nds-bouncing-balls",
+      parameters: { ...baseParameters, reversed: { default: false } },
+    },
+    canvas,
+    parameters: { timeSeconds: 3.7 },
+  });
+  const reversed = service.render({
+    effect: {
+      renderer: "nds-bouncing-balls",
+      parameters: { ...baseParameters, reversed: { default: true } },
+    },
+    canvas,
+    parameters: { timeSeconds: 3.7 },
+  });
+  // Flipping `reversed` bounces the same single source from the opposite end
+  // of the strip, so the whole frame should be the horizontal mirror image.
+  assert.deepEqual(reversed.pixels, [...forward.pixels].reverse());
+});
+
+test("nds-bouncing-balls' mirrored output doesn't depend on reversed (both ends are drawn either way)", () => {
+  const width = 30;
+  const service = new EffectRenderService();
+  const canvas = { width, height: 1 };
+  const baseParameters = {
+    ballCount: { default: 2 },
+    ballSize: { default: 2 },
+    mirrored: { default: true },
+  };
+  const notReversed = service.render({
+    effect: {
+      renderer: "nds-bouncing-balls",
+      parameters: { ...baseParameters, reversed: { default: false } },
+    },
+    canvas,
+    parameters: { timeSeconds: 3.7 },
+  });
+  const reversed = service.render({
+    effect: {
+      renderer: "nds-bouncing-balls",
+      parameters: { ...baseParameters, reversed: { default: true } },
+    },
+    canvas,
+    parameters: { timeSeconds: 3.7 },
+  });
+  assert.deepEqual(reversed.pixels, notReversed.pixels);
+});
+
 test("twinkle-stars uses its configured palette after the ignition flash", () => {
   const frame = new EffectRenderService().render({
     effect: {

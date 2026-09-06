@@ -376,6 +376,10 @@ const renderers = {
     );
     const ballSize = Math.max(1, Math.round(Number(parameters.ballSize ?? 5)));
     const mirrored = Boolean(parameters.mirrored);
+    // Only matters when `mirrored` is off (a single source): picks which end
+    // of the strip the ball bounces from. Irrelevant when mirrored, since
+    // both ends are drawn either way.
+    const reversed = Boolean(parameters.reversed);
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     // Ported directly from NightDriverStrip's BouncingBallEffect::Draw() kinematics
     // (h = v*t - 0.5*g*t^2, energy lost to `dampening` on each bounce) instead of
@@ -434,9 +438,12 @@ const renderers = {
       const position = (heightValue * (width - 1)) / START_HEIGHT;
 
       for (let x = 0; x < ballSize; x += 1) {
-        plotBlended1D(pixels, width, position + x, color);
+        const primaryPosition = reversed
+          ? width - 1 - (position + x)
+          : position + x;
+        plotBlended1D(pixels, width, primaryPosition, color);
         if (mirrored) {
-          plotBlended1D(pixels, width, width - 1 - (position + x), color);
+          plotBlended1D(pixels, width, width - 1 - primaryPosition, color);
         }
       }
     }

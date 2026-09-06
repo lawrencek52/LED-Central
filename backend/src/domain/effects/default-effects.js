@@ -129,12 +129,13 @@ export const defaultEffects = [
     id: "nds-bouncing-balls-a",
     name: "NDS-Bouncing Balls-A",
     description:
-      "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (3 balls).",
+      "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (3 balls). Bounces from the start of the strip (near the controller) by default; set mirrored for a second, mirrored source at the far end, or reversed to bounce from the far end instead.",
     renderer: "nds-bouncing-balls",
     parameters: {
       ballCount: { type: "number", min: 1, max: 20, default: 3 },
       ballSize: { type: "number", min: 1, max: 10, default: 1 },
-      mirrored: { type: "boolean", default: true },
+      mirrored: { type: "boolean", default: false },
+      reversed: { type: "boolean", default: false },
     },
     tags: ["animated", "motion", "nds"],
   },
@@ -142,12 +143,13 @@ export const defaultEffects = [
     id: "nds-bouncing-balls-b",
     name: "NDS-Bouncing Balls-B",
     description:
-      "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (8 balls).",
+      "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (8 balls). Bounces from the start of the strip (near the controller) by default; set mirrored for a second, mirrored source at the far end, or reversed to bounce from the far end instead.",
     renderer: "nds-bouncing-balls",
     parameters: {
       ballCount: { type: "number", min: 1, max: 20, default: 8 },
       ballSize: { type: "number", min: 1, max: 10, default: 1 },
-      mirrored: { type: "boolean", default: true },
+      mirrored: { type: "boolean", default: false },
+      reversed: { type: "boolean", default: false },
     },
     tags: ["animated", "motion", "nds"],
   },
