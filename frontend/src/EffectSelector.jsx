@@ -46,6 +46,13 @@ function EffectSelector({
     }
   }
 
+  function storedFps(currentEffect) {
+    const stored = Number(
+      window.localStorage.getItem(`led-central.fps.${currentEffect.id}`),
+    );
+    return Number.isInteger(stored) && stored >= 1 && stored <= 60 ? stored : 20;
+  }
+
   useEffect(() => {
     let active = true;
     apiClient
@@ -74,9 +81,16 @@ function EffectSelector({
   }, [onError]);
 
   useEffect(() => {
-    if (!effectId && effects[0]) setEffectId(effects[0].id);
-    if (effectId && !effects.some((item) => item.id === effectId))
-      setEffectId(effects[0]?.id || "");
+    // `effects` starts empty until the initial fetch resolves - don't treat
+    // that transient empty state as "the restored effectId no longer
+    // exists," or it gets wiped back to effects[0] before the real list
+    // ever arrives (the restored selection would never survive a refresh).
+    if (effects.length === 0) return;
+    if (!effectId) {
+      setEffectId(effects[0].id);
+      return;
+    }
+    if (!effects.some((item) => item.id === effectId)) setEffectId(effects[0].id);
   }, [effectId, effects]);
 
   useEffect(() => {
@@ -112,6 +126,7 @@ function EffectSelector({
     if (!effect) return;
     setParameters(storedParameters(effect));
     setFriendlyName(effect.name);
+    setFps(storedFps(effect));
   }, [effect]);
 
   async function saveFriendlyName() {
@@ -499,6 +514,19 @@ function EffectSelector({
                           updateParameter(name, event.target.value, definition)
                         }
                       />
+                    ) : definition.type === "select" ? (
+                      <select
+                        value={parameters[name] ?? definition.default ?? ""}
+                        onChange={(event) =>
+                          updateParameter(name, event.target.value, definition)
+                        }
+                      >
+                        {(definition.options ?? []).map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
                     ) : (
                       <span className="number-control">
                         <input
@@ -538,7 +566,15 @@ function EffectSelector({
                     max="60"
                     step="1"
                     value={fps}
-                    onChange={(event) => setFps(Number(event.target.value))}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      setFps(next);
+                      if (effect)
+                        window.localStorage.setItem(
+                          `led-central.fps.${effect.id}`,
+                          String(next),
+                        );
+                    }}
                   />
                   <output>{fps}</output>
                 </span>
