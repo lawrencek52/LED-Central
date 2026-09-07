@@ -359,8 +359,9 @@ export const defaultEffects = [
     renderer: "cylon",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
-      speed: { type: "number", min: 0.1, max: 5, default: 1 },
+      transitSeconds: { type: "number", min: 1, max: 30, default: 3 },
       eyeCount: { type: "number", min: 1, max: 6, default: 2 },
+      eyeSize: { type: "number", min: 1, max: 10, default: 1 },
       eyeColors: {
         type: "palette",
         default: {
@@ -564,10 +565,15 @@ export const defaultEffects = [
     id: "vu-meter",
     name: "VU Meter",
     description:
-      "Symmetric VU bar driven by live beat/volume telemetry, with a beat flash - ported from NightDriverStrip's VUMeterEffect.",
+      "VU bar driven by live beat/volume telemetry, with a beat flash - ported from NightDriverStrip's VUMeterEffect. Grows from the center by default (both directions), or from either end.",
     renderer: "vu-meter",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
+      origin: {
+        type: "select",
+        options: ["center", "left", "right"],
+        default: "center",
+      },
     },
     tags: ["animated", "audio"],
   },
@@ -575,11 +581,10 @@ export const defaultEffects = [
     id: "spectrum-bars",
     name: "Spectrum Analyzer",
     description:
-      "Per-band bar graph across the canvas driven by live FFT telemetry, with a peak-hold cap on each bar - ported from NightDriverStrip's SpectrumAnalyzerEffect.",
+      "Smooth pixel-resolution frequency curve driven by live FFT telemetry, auto-adapting to the canvas - a vertical bar graph with a peak-hold cap on a matrix, or level-as-brightness along the strip on a single row - ported from NightDriverStrip's SpectrumAnalyzerEffect.",
     renderer: "spectrum-bars",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
-      bandCount: { type: "number", min: 4, max: 64, default: 16 },
     },
     tags: ["animated", "audio"],
   },
@@ -587,7 +592,7 @@ export const defaultEffects = [
     id: "musical-fire",
     name: "Musical Fire",
     description:
-      "Heat-diffusion fire that throws extra sparks on each detected beat - ported from NightDriverStrip's MusicalPaletteFire.",
+      "Heat-diffusion fire that throws extra sparks on each detected beat - ported from NightDriverStrip's MusicalPaletteFire. Bounces from the start of the strip (near the controller) by default, same as Fire; set mirrored for a second, mirrored source at the far end, or reversed to burn from the far end instead.",
     renderer: "musical-fire",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
@@ -596,7 +601,8 @@ export const defaultEffects = [
       sparks: { type: "number", min: 0, max: 20, default: 3 },
       sparkHeight: { type: "number", min: 1, max: 20, default: 4 },
       beatSparkBoost: { type: "number", min: 0, max: 200, default: 60 },
-      mirrored: { type: "boolean", default: true },
+      reversed: { type: "boolean", default: true },
+      mirrored: { type: "boolean", default: false },
     },
     tags: ["animated", "fire", "audio"],
   },
@@ -604,10 +610,11 @@ export const defaultEffects = [
     id: "spectrum-band",
     name: "Spectrum Band (per-strip)",
     description:
-      "One group of frequency bands per parallel strip mapping - the level bar is a real flickering fire (not a static gradient) whose extent shows the group's average amplitude, while a peak-hold marker tracks the group's loudest band, briefly holding before falling. Assign several parallel strips to build a multi-band VU wall.",
+      "One group of frequency bands per parallel strip mapping - the level bar is the Fire effect, whose lit extent shows the group's average amplitude, while a peak-hold marker tracks the group's loudest band, briefly holding before falling. Neighboring strips' bars blend together the same way Fire's do. Assign several parallel strips to build a multi-band VU wall.",
     renderer: "spectrum-band",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
+      neighborBlend: { type: "number", min: 0, max: 1, default: 0.2 },
     },
     tags: ["animated", "audio"],
   },

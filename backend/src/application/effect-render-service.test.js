@@ -4,6 +4,7 @@ import {
   EffectRenderService,
   starfieldAngle,
   starfieldExitDistance,
+  interpolateSeries,
 } from "./effect-render-service.js";
 
 test("renders a solid effect across the canvas", () => {
@@ -265,8 +266,9 @@ test("nds-bouncing-balls' mirrored output doesn't depend on reversed (both ends 
 
 function cylonParameters(overrides = {}) {
   return {
-    speed: { default: 1 },
+    transitSeconds: { default: 3 },
     eyeCount: { default: 2 },
+    eyeSize: { default: 1 },
     eyeColors: {
       default: {
         colors: ["#ff0000", "#00ff00", "#0000ff", "#00ffff", "#ff00ff", "#ffff00"],
@@ -289,6 +291,55 @@ test("cylon's default 2-eye scanner mirrors the same sweep (matches the original
     // shift), same as the original two-eye scanner.
     assert.equal(redIndex + greenIndex, width - 1);
   }
+});
+
+test("cylon's transitSeconds is a real, width-independent crossing time", () => {
+  const service = new EffectRenderService();
+  for (const width of [11, 41]) {
+    const effect = {
+      renderer: "cylon",
+      parameters: cylonParameters({ eyeCount: { default: 1 }, transitSeconds: { default: 4 } }),
+    };
+    // At t=0 the eye starts at index 0; after exactly one transitSeconds it
+    // should have reached the far end (width - 1), regardless of width.
+    const start = service.render({ effect, canvas: { width, height: 1 }, timestamp: 0 });
+    const end = service.render({ effect, canvas: { width, height: 1 }, timestamp: 4000 });
+    assert.deepEqual(start.pixels[0], [255, 0, 0]);
+    assert.deepEqual(end.pixels[width - 1], [255, 0, 0]);
+  }
+});
+
+test("cylon's eyeSize over 2 fades its two end pixels to half intensity", () => {
+  const service = new EffectRenderService();
+  const width = 20;
+  const effect = {
+    renderer: "cylon",
+    parameters: cylonParameters({ eyeCount: { default: 1 }, eyeSize: { default: 4 } }),
+  };
+  // A timestamp where the eye sits mid-strip (position 10, well clear of
+  // either edge) so a size-4 eye's 4 pixels (9-12) render without any edge
+  // clamping distorting the expected fade pattern.
+  const span = width - 1; // 19
+  const timestamp = Math.round((10 / (span / 3)) * 1000);
+  const frame = service.render({ effect, canvas: { width, height: 1 }, timestamp });
+  assert.deepEqual(frame.pixels[9], [128, 0, 0]);
+  assert.deepEqual(frame.pixels[10], [255, 0, 0]);
+  assert.deepEqual(frame.pixels[11], [255, 0, 0]);
+  assert.deepEqual(frame.pixels[12], [128, 0, 0]);
+  assert.deepEqual(frame.pixels[8], [0, 0, 0]);
+  assert.deepEqual(frame.pixels[13], [0, 0, 0]);
+});
+
+test("cylon's eyeSize of 2 or less stays full intensity (no fade)", () => {
+  const service = new EffectRenderService();
+  const width = 20;
+  const effect = {
+    renderer: "cylon",
+    parameters: cylonParameters({ eyeCount: { default: 1 }, eyeSize: { default: 2 } }),
+  };
+  const frame = service.render({ effect, canvas: { width, height: 1 }, timestamp: 0 });
+  const lit = frame.pixels.filter((p) => p.some((c) => c > 0));
+  assert.ok(lit.every((p) => p[0] === 255));
 });
 
 test("cylon draws up to 6 independently colored, evenly staggered eyes", () => {
@@ -360,6 +411,66 @@ test("vu-meter grows a symmetric bar from vuRatioFade and flashes on a recent be
   assert.deepEqual(loud.pixels[9], [149, 149, 149]);
 });
 
+test("vu-meter's bar length scales directly with vuRatioFade instead of being compressed by a dB curve", () => {
+  // vuRatioFade is already the firmware's own self-normalized ratio (0-2,
+  // 1.0 = the middle of the recently observed loudness range) - not a raw
+  // linear amplitude - so it must map onto the bar directly rather than
+  // through the same dB-compression curve used for FFT-magnitude-derived
+  // levels elsewhere, which was flattening most of its usable range.
+  //
+  // The bar's own heat gradient starts at 0 (black) right at the center and
+  // ramps up toward the tip, so the innermost lit pixel can legitimately
+  // render black too - check the boundary (first pixel *beyond* the bar is
+  // black) rather than counting non-black pixels.
+  const service = new EffectRenderService();
+  const canvas = { width: 20, height: 1 };
+  const center = 10;
+  const boundaryPixelsFor = (vuRatioFade) => {
+    const frame = service.render({
+      effect: { renderer: "vu-meter", parameters: {} },
+      canvas,
+      parameters: { audio: { vuRatioFade } },
+      timestamp: 0,
+    });
+    return frame.pixels;
+  };
+  // level 0.2 of a 10-pixel half -> litCount 2: index center+1 (last lit) is
+  // some color, center+2 is black.
+  let pixels = boundaryPixelsFor(0.4);
+  assert.ok(pixels[center + 1].some(Boolean));
+  assert.deepEqual(pixels[center + 2], [0, 0, 0]);
+  // level 0.5 -> litCount 5: index center+4 lit, center+5 black.
+  pixels = boundaryPixelsFor(1.0);
+  assert.ok(pixels[center + 4].some(Boolean));
+  assert.deepEqual(pixels[center + 5], [0, 0, 0]);
+  // level 1.0 -> full half lit, right up to the strip's edge.
+  pixels = boundaryPixelsFor(2.0);
+  assert.ok(pixels[canvas.width - 1].some(Boolean));
+});
+
+test("vu-meter's left/right origin grows a single-ended bar across the full width", () => {
+  const service = new EffectRenderService();
+  const canvas = { width: 20, height: 1 };
+  const left = service.render({
+    effect: { renderer: "vu-meter", parameters: { origin: { default: "left" } } },
+    canvas,
+    parameters: { audio: { vuRatioFade: 1.0 } },
+    timestamp: 0,
+  });
+  const right = service.render({
+    effect: { renderer: "vu-meter", parameters: { origin: { default: "right" } } },
+    canvas,
+    parameters: { audio: { vuRatioFade: 1.0 } },
+    timestamp: 0,
+  });
+  // level 0.5 of the full 20-wide strip -> 10 lit pixels, from the
+  // respective end rather than split symmetrically from the center.
+  assert.ok(left.pixels.slice(0, 10).some((p) => p.some(Boolean)));
+  assert.deepEqual(left.pixels.slice(10), new Array(10).fill([0, 0, 0]));
+  assert.ok(right.pixels.slice(10).some((p) => p.some(Boolean)));
+  assert.deepEqual(right.pixels.slice(0, 10), new Array(10).fill([0, 0, 0]));
+});
+
 test("spectrum-bars draws taller bars for louder bands, linear in dB", () => {
   const service = new EffectRenderService();
   const canvas = { width: 8, height: 20 };
@@ -388,6 +499,48 @@ test("spectrum-bars draws taller bars for louder bands, linear in dB", () => {
   // -20dB -> height 13
   assert.ok(isBlack(pixelAt(4, 13)));
   // 0dB (full scale) fills the whole strip - nothing above it to check.
+});
+
+test("interpolateSeries gives a continuous per-column curve instead of discrete same-value blocks", () => {
+  // 4 control points (as if 4 telemetry bands) spread across 7 columns
+  // (position = (x/6)*3, so x lands exactly on each control point at
+  // x=0,2,4,6). Values strictly between two control points must be
+  // strictly between their two values - a block-based design would instead
+  // repeat one control point's value across a whole span of columns.
+  const values = [0, 30, 60, 90];
+  const width = 7;
+  assert.equal(interpolateSeries(values, 0, width), 0);
+  assert.equal(interpolateSeries(values, 2, width), 30);
+  assert.equal(interpolateSeries(values, 4, width), 60);
+  assert.equal(interpolateSeries(values, 6, width), 90);
+  const between = interpolateSeries(values, 1, width); // halfway from 0 to 30
+  assert.equal(between, 15);
+  const between2 = interpolateSeries(values, 3, width); // halfway from 30 to 60
+  assert.equal(between2, 45);
+});
+
+test("spectrum-bars shows level as brightness/color along the strip on a single row instead of an all-or-nothing bar", () => {
+  const service = new EffectRenderService();
+  const canvas = { width: 8, height: 1 };
+  // A one-row canvas can't grow a vertical bar at all - height would only
+  // ever be 0 or 1, reading as "no dynamic range". Level should drive color
+  // intensity across the row instead.
+  const quiet = service.render({
+    effect: { renderer: "spectrum-bars", parameters: {} },
+    canvas,
+    parameters: { timeSeconds: 5, audio: { peaks: [0] } },
+    timestamp: 5000,
+  });
+  const loud = service.render({
+    effect: { renderer: "spectrum-bars", parameters: {} },
+    canvas,
+    parameters: { timeSeconds: 5, audio: { peaks: [1] } },
+    timestamp: 5000,
+  });
+  const brightnessOf = (pixel) => pixel.reduce((sum, c) => sum + c, 0);
+  const totalBrightness = (frame) =>
+    frame.pixels.reduce((sum, pixel) => sum + brightnessOf(pixel), 0);
+  assert.ok(totalBrightness(loud) > totalBrightness(quiet));
 });
 
 test("spectrum-bars draws a red peak-hold cap above the live bar when it's fallen since the peak", () => {
@@ -686,6 +839,43 @@ test("groups multiple telemetry bands per strip: level averages the group, peak 
       [0, 0, 0],
     ]);
   }
+});
+
+test("spectrum-band's neighborBlend correlates each strip's fire with its neighbors, using the Fire effect's own mechanism", () => {
+  const service = new EffectRenderService();
+  const canvas = {
+    width: 20,
+    height: 3,
+    mappings: Array.from({ length: 3 }, (_, i) => ({
+      controllerId: `deck-${i}`,
+      stripIndex: i,
+      layout: "parallel",
+      x: 0,
+      y: i,
+      width: 20,
+      height: 1,
+    })),
+  };
+  // Same level for the two edge strips (rows 0 and 2) so their litCount
+  // matches - only their fire's underlying heat differs, which neighborBlend
+  // should equalize since each has only the (louder) middle strip as its
+  // one neighbor.
+  const audio = { bandCount: 3, peaks: [0.5, 0.95, 0.5], peaksDecayed: [0.5, 0.95, 0.5] };
+  const frame = service.render({
+    effect: {
+      renderer: "spectrum-band",
+      parameters: { neighborBlend: { default: 1 } },
+    },
+    canvas,
+    parameters: { timeSeconds: 5, audio },
+    timestamp: 5000,
+  });
+  const row0 = frame.pixels.slice(0, 20);
+  const row2 = frame.pixels.slice(40, 60);
+  // With full neighbor blending, both edge rows end up entirely derived from
+  // the middle row's pre-blend heat (each has only that one neighbor) - the
+  // exact same proof used for `fire`'s own neighborBlend test.
+  assert.deepEqual(row0, row2);
 });
 
 // test('mp4-playback animates over time instead of showing a single still frame', () => {

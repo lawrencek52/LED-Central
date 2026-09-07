@@ -85,6 +85,13 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
         randomSeed: stableSeed(`${mapping.controllerId}:${mapping.stripIndex}`),
         bandStart,
         bandEnd,
+        // For an effect (like spectrum-band) that needs to simulate every
+        // parallel strip's row together in one pass - e.g. to correlate
+        // neighboring bars the way `fire`'s neighborBlend does - rather than
+        // each strip's independent render call only ever seeing its own
+        // slice of the audio data.
+        mappingOrdinal,
+        stripCount: parallelMappings.length,
       },
       timestamp,
     });
@@ -574,78 +581,43 @@ const renderers = {
     const falloffWidth = Math.max(3, Math.round(ledCount * 0.05));
 
     const rows = Math.max(1, height);
-    const grid = [];
-    for (let row = 0; row < rows; row += 1) {
-      const heat = simulateFireHeat({
-        cellCount: ledCount,
-        elapsedSeconds,
-        // Rows get distinct per-row randomness for cooling, diffusion and
-        // sparking, and for the height envelope's own two minor texture
-        // waves (see fireHeightFraction) - only its dominant, slowest wave
-        // stays keyed off the shared seedSalt so every row breathes together
-        // on the big cycle.
-        seedSalt: seedSalt + row * 97,
-        step: (h, rng, s, stepMs) => {
-          for (let i = 0; i < ledCount; i += 1) {
-            const coolAmount = Math.floor(rng() * cooling);
-            h[i] = Math.max(0, h[i] - coolAmount);
-          }
-          for (let i = 0; i < ledCount; i += 1) {
-            const a = h[(i + 1) % ledCount];
-            const b = h[(i + 2) % ledCount];
-            h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
-          }
-          for (let spark = 0; spark < sparks; spark += 1) {
-            if (rng() * 255 < sparking) {
-              const y = ledCount - 1 - Math.floor(rng() * sparkHeight);
-              if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
-            }
-          }
-          const heightFraction = fireHeightFraction(
-            (s * stepMs) / 1000,
-            seedSalt,
-            seedSalt + row * 97,
-            {
-              min: minHeightFraction,
-              averageFraction: averageHeightFraction,
-              max: maxHeightFraction,
-              waveSeconds: heightWaveSeconds,
-            },
-          );
-          const ceilingDistance = heightFraction * ledCount;
-          for (let i = 0; i < ledCount; i += 1) {
-            const distanceFromBase = ledCount - 1 - i;
-            const over = distanceFromBase - ceilingDistance;
-            if (over > 0) {
-              h[i] = Math.floor(
-                h[i] * Math.max(0, 1 - over / falloffWidth),
-              );
-            }
-          }
-        },
-      });
-      grid.push(heat);
-    }
-
-    if (neighborBlend > 0 && rows > 1) {
-      const previous = grid.map((row) => row.slice());
-      for (let row = 0; row < rows; row += 1) {
-        const above = previous[row - 1];
-        const below = previous[row + 1];
-        const neighborCount = (above ? 1 : 0) + (below ? 1 : 0);
-        if (neighborCount === 0) continue;
+    const grid = simulateFireGrid({
+      rows,
+      cellCount: ledCount,
+      elapsedSeconds,
+      seedSalt,
+      neighborBlend,
+      falloffWidth,
+      // Rows get distinct per-row randomness for cooling, diffusion and
+      // sparking, and for the height envelope's own two minor texture waves
+      // (see fireHeightFraction) - only its dominant, slowest wave stays
+      // keyed off the shared seedSalt so every row breathes together on the
+      // big cycle.
+      rowStep: (h, rng) => {
         for (let i = 0; i < ledCount; i += 1) {
-          const neighborHeat =
-            ((above ? above[i] : 0) + (below ? below[i] : 0)) / neighborCount;
-          grid[row][i] = Math.min(
-            255,
-            Math.round(
-              grid[row][i] * (1 - neighborBlend) + neighborHeat * neighborBlend,
-            ),
-          );
+          const coolAmount = Math.floor(rng() * cooling);
+          h[i] = Math.max(0, h[i] - coolAmount);
         }
-      }
-    }
+        for (let i = 0; i < ledCount; i += 1) {
+          const a = h[(i + 1) % ledCount];
+          const b = h[(i + 2) % ledCount];
+          h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
+        }
+        for (let spark = 0; spark < sparks; spark += 1) {
+          if (rng() * 255 < sparking) {
+            const y = ledCount - 1 - Math.floor(rng() * sparkHeight);
+            if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
+          }
+        }
+      },
+      ceilingFractionForRow: (row, stepSeconds) =>
+        fireHeightFraction(stepSeconds, seedSalt, seedSalt + row * 97, {
+          min: minHeightFraction,
+          averageFraction: averageHeightFraction,
+          max: maxHeightFraction,
+          waveSeconds: heightWaveSeconds,
+        }),
+    });
 
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     for (let row = 0; row < rows; row += 1) {
@@ -862,13 +834,20 @@ const renderers = {
     return pixels;
   },
   cylon: ({ width, height, parameters, timestamp }) => {
-    const speed = Math.max(0.1, Number(parameters.speed ?? 1));
+    // Time to cross the strip once (end to end), not a raw speed multiplier -
+    // independent of strip length, so the same setting means the same real
+    // transit time on any strip instead of a "speed" whose actual crossing
+    // time used to vary with width.
+    const transitSeconds = clamp(Number(parameters.transitSeconds ?? 3), 1, 30);
     const eyeCount = clamp(Math.round(Number(parameters.eyeCount ?? 2)), 1, 6);
+    const eyeSize = clamp(Math.round(Number(parameters.eyeSize ?? 1)), 1, 10);
     const colors = normalizePalette(parameters.eyeColors);
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-    const period = Math.max(1, width - 1) * 2;
+    const span = Math.max(1, width - 1);
+    const period = span * 2;
     const seconds = timestamp / 1000;
-    const baseCycle = (seconds * speed * 20) % period;
+    const pixelsPerSecond = span / transitSeconds;
+    const baseCycle = (seconds * pixelsPerSecond) % period;
     // Each eye rides the same back-and-forth sweep, evenly staggered around
     // the cycle - eyeCount:2 exactly reproduces the original two-eye Silon
     // scanner (a phase shift of half the period turns one eye's sweep into
@@ -878,8 +857,17 @@ const renderers = {
       const offset = cycle < period / 2 ? cycle : period - cycle;
       const pos = clamp(Math.round(offset), 0, width - 1);
       const color = colors[eye % colors.length];
-      for (let y = 0; y < height; y += 1) {
-        blendChannel(pixels, y * width + pos, color, 1);
+      // Centered on `pos`; sizes over 2 fade their two end pixels to 50% so
+      // the eye reads as one smooth-edged blob in motion rather than a hard
+      // block that "pops" a full pixel wider/narrower as it moves.
+      const startPos = pos - Math.floor((eyeSize - 1) / 2);
+      for (let k = 0; k < eyeSize; k += 1) {
+        const idx = clamp(startPos + k, 0, width - 1);
+        const isEdge = eyeSize > 2 && (k === 0 || k === eyeSize - 1);
+        const weight = isEdge ? 0.5 : 1;
+        for (let y = 0; y < height; y += 1) {
+          blendChannel(pixels, y * width + idx, color, weight);
+        }
       }
     }
     return pixels;
@@ -1061,61 +1049,98 @@ const renderers = {
   // telemetry, with a brief flash on the outer tip when a beat lands.
   "vu-meter": ({ width, height, parameters, timestamp }) => {
     const audio = parameters.audio;
+    const origin = parameters.origin ?? "center";
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-    const half = Math.max(1, Math.floor(width / 2));
-    const center = Math.floor(width / 2);
-    const rawLevel = clamp(Number(audio?.vuRatioFade ?? 0) / 2, 0, 1);
-    const level = amplitudeToDbFraction(rawLevel);
-    const litCount = Math.round(level * half);
-    for (let i = 0; i < litCount; i += 1) {
-      const heat = Math.round((i / Math.max(1, half - 1)) * 255);
-      const color = heatToFireColor(heat);
-      setPixelAllRows(pixels, width, height, center + i, color);
-      setPixelAllRows(pixels, width, height, center - 1 - i, color);
-    }
+    // vuRatioFade is the firmware's own self-normalized ratio against a
+    // running min/max loudness envelope (range 0-2, where 1.0 means "at the
+    // middle of the recently observed range") - not a linear amplitude
+    // against a fixed full scale, so it must not be run through
+    // amplitudeToDbFraction (built for FFT magnitude vs. a fixed reference
+    // level). Doing that was double-normalizing an already-normalized value,
+    // which flattened most of its dynamic range before it ever reached the
+    // display - the fix is to use it directly once scaled to 0..1.
+    const level = clamp(Number(audio?.vuRatioFade ?? 0) / 2, 0, 1);
     const lastBeatAt = audio?.lastBeatAt;
     const msSinceBeat = Number.isFinite(lastBeatAt) ? timestamp - lastBeatAt : Infinity;
-    if (litCount > 0 && msSinceBeat >= 0 && msSinceBeat < 120) {
-      const fade = 1 - msSinceBeat / 120;
-      const flash = [255, 255, 255].map((channel) => Math.round(channel * fade));
-      setPixelAllRows(pixels, width, height, center + litCount - 1, flash);
-      setPixelAllRows(pixels, width, height, center - litCount, flash);
+    const beatFading = msSinceBeat >= 0 && msSinceBeat < 120;
+    const flashColor = beatFading
+      ? [255, 255, 255].map((channel) => Math.round(channel * (1 - msSinceBeat / 120)))
+      : null;
+
+    if (origin === "center") {
+      const half = Math.max(1, Math.floor(width / 2));
+      const center = Math.floor(width / 2);
+      const litCount = Math.round(level * half);
+      for (let i = 0; i < litCount; i += 1) {
+        const heat = Math.round((i / Math.max(1, half - 1)) * 255);
+        const color = heatToFireColor(heat);
+        setPixelAllRows(pixels, width, height, center + i, color);
+        setPixelAllRows(pixels, width, height, center - 1 - i, color);
+      }
+      if (litCount > 0 && flashColor) {
+        setPixelAllRows(pixels, width, height, center + litCount - 1, flashColor);
+        setPixelAllRows(pixels, width, height, center - litCount, flashColor);
+      }
+    } else {
+      const litCount = Math.round(level * width);
+      for (let i = 0; i < litCount; i += 1) {
+        const heat = Math.round((i / Math.max(1, width - 1)) * 255);
+        const color = heatToFireColor(heat);
+        const index = origin === "left" ? i : width - 1 - i;
+        setPixelAllRows(pixels, width, height, index, color);
+      }
+      if (litCount > 0 && flashColor) {
+        const tip = origin === "left" ? litCount - 1 : width - litCount;
+        setPixelAllRows(pixels, width, height, tip, flashColor);
+      }
     }
     return pixels;
   },
   // Ported from NightDriverStrip's SpectrumAnalyzerEffect/SpectrumBarEffect
-  // (spectrumeffects.h): one bar per frequency band across a single strip or
-  // matrix row. `peaks` (live, undamped) drives the bar itself so it tracks
-  // the music in real time; `peaksDecayed` (CanvasAudioService's peak-hold
-  // marker - instant rise, hold, then a constant-dB-per-second fall) draws a
-  // red cap above it (2 pixels wide on a strip over 100 LEDs), like a
-  // hardware peak-hold LED spectrum analyzer.
+  // (spectrumeffects.h), then reworked 2026-09-08 for pixel-resolution display
+  // and to auto-adapt to whatever canvas shape it's given, rather than a
+  // fixed bandCount of same-height blocks:
+  //  - The frequency axis is continuously interpolated across every column
+  //    (interpolateSeries below) from the 16 native Mel-spaced bands, instead
+  //    of dividing the strip into bandCount discrete same-height segments -
+  //    "coarse blocky bars" become a smooth per-pixel curve, and there's no
+  //    longer a bandCount to manually tune to the canvas width.
+  //  - On a real matrix (height > 1), that per-column level still drives a
+  //    vertical bar height and red peak-hold cap, same as before.
+  //  - On a single-row strip (height === 1) a "bar height" of exactly 0 or 1
+  //    LED is all that's geometrically possible there, which read as "no
+  //    dynamic range/low gain" - there's no missing row to grow into, so
+  //    instead the level itself drives brightness/color intensity along the
+  //    strip's length (heatToFireColor(level*255) per pixel), the same way
+  //    VU Meter and Spectrum Band already express level as color/extent
+  //    rather than vertical height on a 1-row strip.
   "spectrum-bars": ({ width, height, parameters }) => {
     const audio = parameters.audio;
-    const bandCount = Math.max(
-      1,
-      Math.round(Number(parameters.bandCount ?? audio?.bandCount ?? 16)),
-    );
     const peaks = audio?.peaks ?? [];
     const peaksDecayed = audio?.peaksDecayed ?? [];
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-    const segmentWidth = width / bandCount;
-    for (let band = 0; band < bandCount; band += 1) {
-      const level = amplitudeToDbFraction(clamp(Number(peaks[band] ?? 0), 0, 1));
-      const barHeight = Math.round(level * height);
-      const peak = amplitudeToDbFraction(clamp(Number(peaksDecayed[band] ?? 0), 0, 1));
-      const peakRow = Math.round(peak * height) - 1;
-      const xStart = Math.floor(band * segmentWidth);
-      const xEnd = Math.max(xStart + 1, Math.floor((band + 1) * segmentWidth));
-      for (let x = xStart; x < xEnd && x < width; x += 1) {
-        for (let row = 0; row < barHeight; row += 1) {
-          const heat = Math.round((row / Math.max(1, height - 1)) * 255);
-          pixels[(height - 1 - row) * width + x] = heatToFireColor(heat);
-        }
-        for (const row of peakMarkerPositions(peakRow, height)) {
-          if (row >= barHeight && row < height) {
-            pixels[(height - 1 - row) * width + x] = PEAK_MARKER_COLOR;
-          }
+    const levelAt = (x) =>
+      amplitudeToDbFraction(clamp(interpolateSeries(peaks, x, width), 0, 1));
+
+    if (height === 1) {
+      for (let x = 0; x < width; x += 1) {
+        pixels[x] = heatToFireColor(Math.round(levelAt(x) * 255));
+      }
+      return pixels;
+    }
+
+    const peakAt = (x) =>
+      amplitudeToDbFraction(clamp(interpolateSeries(peaksDecayed, x, width), 0, 1));
+    for (let x = 0; x < width; x += 1) {
+      const barHeight = Math.round(levelAt(x) * height);
+      const peakRow = Math.round(peakAt(x) * height) - 1;
+      for (let row = 0; row < barHeight; row += 1) {
+        const heat = Math.round((row / Math.max(1, height - 1)) * 255);
+        pixels[(height - 1 - row) * width + x] = heatToFireColor(heat);
+      }
+      for (const row of peakMarkerPositions(peakRow, height)) {
+        if (row >= barHeight && row < height) {
+          pixels[(height - 1 - row) * width + x] = PEAK_MARKER_COLOR;
         }
       }
     }
@@ -1140,6 +1165,7 @@ const renderers = {
       0,
       Math.round(Number(parameters.beatSparkBoost ?? 60)),
     );
+    const reversed = Boolean(parameters.reversed);
     const mirrored = Boolean(parameters.mirrored);
     const elapsedSeconds = Number(parameters.timeSeconds ?? 0);
     const startedAtMs = timestamp - elapsedSeconds * 1000;
@@ -1180,26 +1206,34 @@ const renderers = {
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     for (let i = 0; i < ledCount; i += 1) {
       const color = heatToFireColor(heat[i]);
-      setPixelAllRows(pixels, width, height, i, color);
+      const j = reversed ? ledCount - 1 - i : i;
+      setPixelAllRows(pixels, width, height, j, color);
       if (mirrored) {
-        setPixelAllRows(pixels, width, height, 2 * ledCount - 1 - i, color);
+        const mirrorIndex = !reversed ? 2 * ledCount - 1 - i : ledCount + i;
+        setPixelAllRows(pixels, width, height, mirrorIndex, color);
       }
     }
     return pixels;
   },
-  // New effect: one group of frequency bands per parallel-mapped strip
-  // (bandStart/bandEnd come from renderCanvasEffect's per-parallel-mapping
-  // threading above) - assign several `layout: 'parallel'` strips to this
-  // effect to build a physical multi-band VU wall. The live level bar is the
-  // *average* of the strip's band group (a steadier amplitude reading), while
-  // the peak-hold marker (from CanvasAudioService's peaksDecayed) takes the
-  // *max* across the same group, so a spike in any one band still registers.
+  // New effect: one group of frequency bands per parallel-mapped strip -
+  // assign several `layout: 'parallel'` strips to this effect to build a
+  // physical multi-band VU wall. The live level bar is the *average* of the
+  // strip's band group (a steadier amplitude reading), while the peak-hold
+  // marker (from CanvasAudioService's peaksDecayed) takes the *max* across
+  // the same group, so a spike in any one band still registers.
   //
-  // One of this effect's original goals was for the level bar to actually be
-  // the Fire effect rather than a static per-position gradient - so instead
-  // of a solid color ramp, a real fire automaton (the same one `fire` uses)
-  // burns across the strip, and the live level masks how much of it is
-  // currently visible.
+  // The level bar is the Fire effect, not a static color ramp - literally
+  // the same simulateFireGrid() helper `fire` uses, just with each row's
+  // ceiling driven by that row's own live audio level instead of a slow
+  // breathing wave, so a bar's fire-lit *extent* is the VU reading. This
+  // also means bars affect their neighbors via the exact same neighborBlend
+  // pass `fire` uses - important since each of this effect's parallel-mapped
+  // strips is otherwise rendered by an independent call (renderCanvasEffect
+  // calls the renderer once per strip, with no visibility into any other
+  // strip's data or output). To correlate bars anyway, every call
+  // redundantly re-simulates *every* row from the full `stripCount`/
+  // `mappingOrdinal` it's given (cheap - benchmarked well under render
+  // budget even at 8 rows) and then keeps only its own row.
   //
   // Sparks stay anchored at the strip's physical end (width - 1), same as
   // `fire`, but diffusion here feeds from *lower*-index neighbors (with
@@ -1209,19 +1243,11 @@ const renderers = {
   // `fire` doesn't care which direction it flows since the whole strip is
   // always shown, but here it matters: the old higher-to-lower flow made the
   // flame visibly travel from the peak down toward the start, backwards from
-  // a VU wall's usual "grows up from the base toward the peak" look.
-  //
-  // This direction also happens to fix a real bug the old one had: on a long
-  // strip (200+ LEDs) at a quiet/floor level - a small litCount far from
-  // index width-1 - cooling/diffusion's limited reach within the ~3s
-  // simulation window (see simulateFireHeat) meant a spark at width-1 could
-  // never reach the visible region at all, rendering it permanently black
-  // except for the static peak marker (the "frozen" display reported on
-  // 215-LED strips, never seen on an 88-LED strip where the same floor
-  // litCount sits close enough to width-1 to still be reached). Now, the
-  // wraparound hop from width-1 lands directly at index 0 - one step away
-  // from the visible window's own start - so the flame reaches it at any
-  // litCount, long strip or short.
+  // a VU wall's usual "grows up from the base toward the peak" look. This
+  // also sets `distanceFromBase` to count *up* from index 0 (the visible
+  // base) rather than simulateFireGrid's default of counting down from the
+  // far end - the ceiling here caps how far the flame climbs past the
+  // current level, not how far it reaches back from the spark end.
   "spectrum-band": ({ width, height, parameters, timestamp }) => {
     const audio = parameters.audio;
     const peaks = audio?.peaks ?? [];
@@ -1231,37 +1257,80 @@ const renderers = {
       bandStart + 1,
       Math.round(Number(parameters.bandEnd ?? audio?.bandCount ?? bandStart + 1)),
     );
-    const level = amplitudeToDbFraction(clamp(average(peaks.slice(bandStart, bandEnd)), 0, 1));
     const peak = amplitudeToDbFraction(clamp(maxOf(peaksDecayed.slice(bandStart, bandEnd)), 0, 1));
-    const litCount = Math.round(level * width);
+
+    const stripCount = Math.max(1, Math.round(Number(parameters.stripCount ?? 1)));
+    const myRow = clamp(Math.round(Number(parameters.mappingOrdinal ?? 0)), 0, stripCount - 1);
+    const bandTotal = Math.max(1, Math.round(Number(audio?.bandCount ?? stripCount)));
+    // Matches renderCanvasEffect's own per-mapping band split exactly, so
+    // every row's level here lines up with what that row's own real call
+    // would compute for bandStart/bandEnd.
+    const levelForRow = (row) => {
+      const start = Math.floor((row / stripCount) * bandTotal);
+      const end = Math.max(start + 1, Math.floor(((row + 1) / stripCount) * bandTotal));
+      return amplitudeToDbFraction(clamp(average(peaks.slice(start, end)), 0, 1));
+    };
 
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    const neighborBlend = clamp(Number(parameters.neighborBlend ?? 0.2), 0, 1);
     const cooling = 3;
     const sparking = 100;
     const sparks = 3;
     const sparkHeight = 4;
-    const heat = simulateFireHeat({
-      cellCount: width,
-      elapsedSeconds,
-      seedSalt: 47 + Number(parameters.randomSeed ?? 0),
-      step: (h, rng) => {
-        for (let i = 0; i < width; i += 1) {
-          const coolAmount = Math.floor(rng() * cooling);
-          h[i] = Math.max(0, h[i] - coolAmount);
-        }
-        for (let i = 0; i < width; i += 1) {
-          const a = h[(i - 1 + width) % width];
-          const b = h[(i - 2 + width) % width];
-          h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
-        }
-        for (let s = 0; s < sparks; s += 1) {
-          if (rng() * 255 < sparking) {
-            const y = width - 1 - Math.floor(rng() * sparkHeight);
-            if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
-          }
-        }
-      },
-    });
+    // No ceiling here (unlike `fire`'s breathing one): sparks are anchored
+    // at width-1 so wraparound diffusion always reaches the visible base at
+    // index 0 within one hop (see the direction note above) - a ceiling
+    // measured from index 0 would suppress the spark's own origin before it
+    // could ignite at all, since width-1 sits far on the wrong side of any
+    // level below 100%. Instead the full, unbounded automaton runs (as
+    // before this was ever unified with `fire`), correlated across rows via
+    // neighborBlend, and the live level only decides how much of each row's
+    // result is actually windowed into view below.
+    // The grid depends on nothing but (stripCount, width, elapsedSeconds,
+    // neighborBlend) - not on any per-mapping data - so every one of this
+    // tick's `stripCount` independent per-mapping calls would otherwise
+    // redundantly recompute the exact same grid just to keep its own row
+    // (measured ~8x cost on a real 8-strip canvas). Memoize the single most
+    // recent grid instead of caching per key indefinitely, since only ever
+    // one (stripCount, width, elapsedSeconds, neighborBlend) combination is
+    // in flight at a time within one render tick.
+    const grid = memoizedFireGrid(
+      `${stripCount}:${width}:${elapsedSeconds}:${neighborBlend}`,
+      () =>
+        simulateFireGrid({
+          rows: stripCount,
+          cellCount: width,
+          elapsedSeconds,
+          // A fixed salt, deliberately *not* the per-mapping
+          // `parameters.randomSeed` renderCanvasEffect assigns each strip
+          // (stableSeed(controllerId:stripIndex)) - every strip's
+          // independent call must derive an identical grid to blend
+          // correctly; varying the base seed per mapping would make each
+          // call simulate a different random universe for the "same"
+          // neighbor rows, breaking the correlation instead of producing it.
+          seedSalt: 47,
+          neighborBlend,
+          rowStep: (h, rng) => {
+            for (let i = 0; i < width; i += 1) {
+              const coolAmount = Math.floor(rng() * cooling);
+              h[i] = Math.max(0, h[i] - coolAmount);
+            }
+            for (let i = 0; i < width; i += 1) {
+              const a = h[(i - 1 + width) % width];
+              const b = h[(i - 2 + width) % width];
+              h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
+            }
+            for (let s = 0; s < sparks; s += 1) {
+              if (rng() * 255 < sparking) {
+                const y = width - 1 - Math.floor(rng() * sparkHeight);
+                if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
+              }
+            }
+          },
+        }),
+    );
+    const heat = grid[myRow];
+    const litCount = Math.round(levelForRow(myRow) * width);
 
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     for (let i = 0; i < litCount; i += 1) {
@@ -1324,6 +1393,23 @@ function average(values) {
 
 function maxOf(values) {
   return values.reduce((max, value) => Math.max(max, Number(value ?? 0)), 0);
+}
+
+// Linearly interpolates `values` (e.g. 16 Mel-spaced telemetry bands) at
+// column `x` of a `width`-pixel display, mapping x=0..width-1 onto control
+// points 0..values.length-1 - used to give a smooth per-pixel curve across
+// however many LEDs the canvas actually has, rather than dividing them into
+// a fixed number of discrete same-value blocks.
+export function interpolateSeries(values, x, width) {
+  if (!values.length) return 0;
+  if (values.length === 1) return Number(values[0] ?? 0);
+  const position = width > 1 ? (x / (width - 1)) * (values.length - 1) : 0;
+  const lowerIndex = Math.floor(position);
+  const upperIndex = Math.min(values.length - 1, lowerIndex + 1);
+  const fraction = position - lowerIndex;
+  const lower = Number(values[lowerIndex] ?? 0);
+  const upper = Number(values[upperIndex] ?? 0);
+  return lower + (upper - lower) * fraction;
 }
 
 // Peak-hold markers (spectrum-bars, spectrum-band) render red rather than
@@ -1732,6 +1818,82 @@ function simulateFireHeat({ cellCount, elapsedSeconds, seedSalt, step }) {
     step(heat, rng, s, stepMs);
   }
   return heat;
+}
+
+// Runs `simulateFireHeat` once per row (each with its own row-derived
+// seedSalt), applies an optional per-row height ceiling every simulated
+// step (a soft attenuation past `ceilingFractionForRow(row, stepSeconds) *
+// cellCount`, measured as `distanceFromBase(i)` - defaults to counting down
+// from the far end, matching `fire`'s own spark-at-the-end convention), then
+// blends each row's final heat with its immediate neighbor rows so multiple
+// rows read as one connected fire instead of independent, uncorrelated
+// ones. Shared by `fire` (ceiling driven by a slow breathing wave) and
+// `spectrum-band` (ceiling driven by that row's own live audio level).
+// Single-entry memo for simulateFireGrid results (see spectrum-band's use of
+// it): each render tick has exactly one (stripCount, width, elapsedSeconds,
+// neighborBlend) combination in flight across all of that tick's per-mapping
+// calls, so caching only the most recent key/result is enough to fully
+// dedupe the redundant recomputation without an unbounded/leaking cache.
+let fireGridCache = null;
+function memoizedFireGrid(key, compute) {
+  if (fireGridCache?.key === key) return fireGridCache.grid;
+  const grid = compute();
+  fireGridCache = { key, grid };
+  return grid;
+}
+
+function simulateFireGrid({
+  rows,
+  cellCount,
+  elapsedSeconds,
+  seedSalt,
+  neighborBlend,
+  rowStep,
+  ceilingFractionForRow,
+  distanceFromBase = (i) => cellCount - 1 - i,
+  falloffWidth = Math.max(3, Math.round(cellCount * 0.05)),
+}) {
+  const grid = [];
+  for (let row = 0; row < rows; row += 1) {
+    const heat = simulateFireHeat({
+      cellCount,
+      elapsedSeconds,
+      seedSalt: seedSalt + row * 97,
+      step: (h, rng, s, stepMs) => {
+        rowStep(h, rng, s, stepMs, row);
+        if (!ceilingFractionForRow) return;
+        const heightFraction = ceilingFractionForRow(row, (s * stepMs) / 1000);
+        const ceilingDistance = heightFraction * cellCount;
+        for (let i = 0; i < cellCount; i += 1) {
+          const over = distanceFromBase(i) - ceilingDistance;
+          if (over > 0) {
+            h[i] = Math.floor(h[i] * Math.max(0, 1 - over / falloffWidth));
+          }
+        }
+      },
+    });
+    grid.push(heat);
+  }
+
+  if (neighborBlend > 0 && rows > 1) {
+    const previous = grid.map((row) => row.slice());
+    for (let row = 0; row < rows; row += 1) {
+      const above = previous[row - 1];
+      const below = previous[row + 1];
+      const neighborCount = (above ? 1 : 0) + (below ? 1 : 0);
+      if (neighborCount === 0) continue;
+      for (let i = 0; i < cellCount; i += 1) {
+        const neighborHeat =
+          ((above ? above[i] : 0) + (below ? below[i] : 0)) / neighborCount;
+        grid[row][i] = Math.min(
+          255,
+          Math.round(grid[row][i] * (1 - neighborBlend) + neighborHeat * neighborBlend),
+        );
+      }
+    }
+  }
+
+  return grid;
 }
 
 // A smooth, deterministic wander between `min` and `max` that rests near
