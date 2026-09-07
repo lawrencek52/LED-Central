@@ -5,6 +5,7 @@ export const defaultEffects = [
     description: "Render one color across the selected canvas.",
     renderer: "solid",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       color: { type: "color", default: "#ffffff" },
     },
     tags: ["basic", "static"],
@@ -15,7 +16,9 @@ export const defaultEffects = [
     description:
       "Rainbow debug swatch used in the original NightDriver firmware.",
     renderer: "dave-debug",
-    parameters: {},
+    parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
+    },
     tags: ["debug", "rainbow"],
   },
   {
@@ -24,6 +27,7 @@ export const defaultEffects = [
     description: "Render a linear gradient across the selected canvas.",
     renderer: "gradient",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       startColor: { type: "color", default: "#ff0000" },
       endColor: { type: "color", default: "#0000ff" },
       angle: { type: "number", min: 0, max: 360, default: 0 },
@@ -61,6 +65,7 @@ export const defaultEffects = [
     description: "Animate a moving hue wave across the selected canvas.",
     renderer: "color-wave",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       speed: { type: "number", min: 0, max: 5, default: 0.5 },
       waveFrequency: { type: "number", min: 0.1, max: 50, default: 10 },
     },
@@ -72,6 +77,7 @@ export const defaultEffects = [
     description: "Animate a moving color wave across the selected canvas.",
     renderer: "wave",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       color: { type: "color", default: "#00ccff" },
       speed: { type: "number", min: 0, max: 10, default: 1 },
       width: { type: "number", min: 1, max: 100, default: 25 },
@@ -82,10 +88,16 @@ export const defaultEffects = [
     id: "starfield",
     name: "Starfield",
     description:
-      "Traveling starfield effect inspired by the NightDriver Starfield implementation.",
+      "Traveling starfield effect inspired by the NightDriver Starfield implementation. Stars continuously respawn from the origin so roughly starCount stars are visible at any moment.",
     renderer: "starfield",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       starCount: { type: "number", min: 0, max: 500, default: 100 },
+      origin: {
+        type: "select",
+        options: ["center", "left", "right"],
+        default: "center",
+      },
     },
     tags: ["animated", "space", "particles"],
   },
@@ -96,6 +108,7 @@ export const defaultEffects = [
       "Render a scrolling stock ticker-style marquee similar to the stock banner effect.",
     renderer: "stock-banner",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       symbols: { type: "array", default: ["NDS", "AAPL", "MSFT"] },
       stockServerHost: { type: "string", default: "localhost" },
       stockServerPort: { type: "number", min: 1, max: 65535, default: 8888 },
@@ -112,6 +125,7 @@ export const defaultEffects = [
       "Particle bursts that ignite, hold, then fade - physics and timing ported from NightDriverStrip's FireworksEffect (with synthetic periodic launches replacing its beat trigger).",
     renderer: "fireworks",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       maxSpeed: { type: "number", min: 10, max: 300, default: 175 },
       newParticleProbability: { type: "number", min: 0.1, max: 3, default: 1 },
       particlePreignitionTime: { type: "number", min: 0, max: 2, default: 0 },
@@ -132,6 +146,7 @@ export const defaultEffects = [
       "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (3 balls). Bounces from the start of the strip (near the controller) by default; set mirrored for a second, mirrored source at the far end, or reversed to bounce from the far end instead.",
     renderer: "nds-bouncing-balls",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       ballCount: { type: "number", min: 1, max: 20, default: 3 },
       ballSize: { type: "number", min: 1, max: 10, default: 1 },
       mirrored: { type: "boolean", default: false },
@@ -146,6 +161,7 @@ export const defaultEffects = [
       "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (8 balls). Bounces from the start of the strip (near the controller) by default; set mirrored for a second, mirrored source at the far end, or reversed to bounce from the far end instead.",
     renderer: "nds-bouncing-balls",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       ballCount: { type: "number", min: 1, max: 20, default: 8 },
       ballSize: { type: "number", min: 1, max: 10, default: 1 },
       mirrored: { type: "boolean", default: false },
@@ -160,6 +176,7 @@ export const defaultEffects = [
       "Two palettes scrolling in opposite directions and blended together.",
     renderer: "double-palette",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       paletteA: {
         type: "palette",
         default: {
@@ -211,6 +228,7 @@ export const defaultEffects = [
       'Heat-diffusion fire simulation ported from NightDriverStrip\'s FireEffect ("Medium Fire"). A single source burns from the start of the strip (near the controller); on a canvas with several parallel strips, neighboring rows blend together into one connected fire.',
     renderer: "fire",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       cooling: { type: "number", min: 0, max: 100, default: 3 },
       sparking: { type: "number", min: 0, max: 255, default: 100 },
       sparks: { type: "number", min: 0, max: 20, default: 3 },
@@ -232,6 +250,7 @@ export const defaultEffects = [
       "The classic Fire2012-style automaton ported from NightDriverStrip's ClassicFireEffect, diffusing in the opposite direction from Fire with its own heat-color ramp.",
     renderer: "classic-fire",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       cooling: { type: "number", min: 0, max: 100, default: 5 },
       reversed: { type: "boolean", default: false },
       mirrored: { type: "boolean", default: false },
@@ -245,6 +264,7 @@ export const defaultEffects = [
       "Meteors streak across the canvas leaving a fading trail, ported from NightDriverStrip's MeteorEffect (4 meteors).",
     renderer: "meteor",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       meteorCount: { type: "number", min: 1, max: 10, default: 4 },
       meteorSize: { type: "number", min: 1, max: 20, default: 4 },
       decay: { type: "number", min: 1, max: 10, default: 10 },
@@ -260,6 +280,7 @@ export const defaultEffects = [
       "Meteors streak across the canvas leaving a fading trail, ported from NightDriverStrip's MeteorEffect (2 meteors).",
     renderer: "meteor",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       meteorCount: { type: "number", min: 1, max: 10, default: 2 },
       meteorSize: { type: "number", min: 1, max: 20, default: 4 },
       decay: { type: "number", min: 1, max: 10, default: 10 },
@@ -274,6 +295,7 @@ export const defaultEffects = [
     description: "A rainbow fill that skips every Nth pixel.",
     renderer: "simple-rainbow",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       everyNth: { type: "number", min: 1, max: 20, default: 12 },
       speedDivisor: { type: "number", min: 1, max: 30, default: 8 },
     },
@@ -285,6 +307,7 @@ export const defaultEffects = [
     description: "A drifting rainbow overlaid with random white twinkles.",
     renderer: "rainbow-twinkle",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       speedDivisor: { type: "number", min: 1, max: 30, default: 12 },
       deltaHue: { type: "number", min: 1, max: 60, default: 14 },
     },
@@ -296,6 +319,7 @@ export const defaultEffects = [
     description: "A continuously scrolling rainbow fill.",
     renderer: "rainbowfill",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       speedDivisor: { type: "number", min: 1, max: 30, default: 12 },
       deltaHue: { type: "number", min: 1, max: 60, default: 14 },
       mirrored: { type: "boolean", default: false },
@@ -308,6 +332,7 @@ export const defaultEffects = [
     description: "Fill every Nth pixel with a solid color.",
     renderer: "color-fill",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       color: { type: "color", default: "#f6c8a0" },
       everyNth: { type: "number", min: 1, max: 20, default: 10 },
     },
@@ -320,6 +345,7 @@ export const defaultEffects = [
       "Randomly colored pixels appear and fade like sparkling lights.",
     renderer: "twinkle",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       countToDraw: { type: "number", min: 1, max: 500, default: 60 },
       updateSpeedMs: { type: "number", min: 10, max: 200, default: 40 },
     },
@@ -327,12 +353,27 @@ export const defaultEffects = [
   },
   {
     id: "nds-silon",
-    name: "Silon",
+    name: "Cylon",
     description:
-      "Battlestar Galactica inspired scanner that moves red and green bars back and forth.",
-    renderer: "silon",
+      "Battlestar Galactica inspired scanner - configurable number of eyes, each sweeping back and forth in its own color.",
+    renderer: "cylon",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       speed: { type: "number", min: 0.1, max: 5, default: 1 },
+      eyeCount: { type: "number", min: 1, max: 6, default: 2 },
+      eyeColors: {
+        type: "palette",
+        default: {
+          colors: [
+            "#ff0000",
+            "#00ff00",
+            "#0000ff",
+            "#00ffff",
+            "#ff00ff",
+            "#ffff00",
+          ],
+        },
+      },
     },
     tags: ["animated", "scanner", "nds"],
   },
@@ -342,6 +383,7 @@ export const defaultEffects = [
     description: "The game of Snake visualized as a moving strip effect.",
     renderer: "snake",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       snakeSize: { type: "number", min: 2, max: 30, default: 3 },
       speed: { type: "number", min: 0.5, max: 20, default: 4 },
     },
@@ -354,6 +396,7 @@ export const defaultEffects = [
       "A base night-sky color overlaid with randomly igniting white stars, ported from NightDriverStrip's NightTwinkleEffect.",
     renderer: "night-twinkle",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       baseColor: { type: "color", default: "#0000ff" },
       density: { type: "number", min: 0, max: 5, default: 1 },
       starsPerFrame: { type: "number", min: 1, max: 100, default: 10 },
@@ -366,6 +409,7 @@ export const defaultEffects = [
     description: "Randomly colored dots blink on and off across the canvas.",
     renderer: "twinkle-star",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       density: { type: "number", min: 0.1, max: 5, default: 1 },
     },
     tags: ["animated", "sparkle", "nds"],
@@ -377,6 +421,7 @@ export const defaultEffects = [
       "A field of fading-in-then-out red stars, ported from NightDriverStrip's StarEffect<QuietStar>.",
     renderer: "twinkle-stars",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       palette: {
         type: "palette",
         default: {
@@ -414,6 +459,7 @@ export const defaultEffects = [
       "A field of fading-in-then-out green stars, ported from NightDriverStrip's StarEffect<QuietStar>.",
     renderer: "twinkle-stars",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       palette: {
         type: "palette",
         default: {
@@ -451,6 +497,7 @@ export const defaultEffects = [
       "A field of blue stars that flash white on ignition, hold, then fade - ported from NightDriverStrip's StarEffect<Star>.",
     renderer: "twinkle-stars",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       palette: {
         type: "palette",
         default: {
@@ -471,6 +518,7 @@ export const defaultEffects = [
       "A field of fading-in-then-out rainbow-colored stars, ported from NightDriverStrip's StarEffect<QuietStar>.",
     renderer: "twinkle-stars",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       rainbow: { type: "boolean", default: true },
       variant: { type: "string", default: "quiet" },
       probability: { type: "number", min: 0.1, max: 5, default: 1 },
@@ -486,6 +534,7 @@ export const defaultEffects = [
       "Discrete light segments spaced by gaps that move along a color palette.",
     renderer: "palette-effect",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       palette: {
         type: "palette",
         default: {
@@ -517,7 +566,9 @@ export const defaultEffects = [
     description:
       "Symmetric VU bar driven by live beat/volume telemetry, with a beat flash - ported from NightDriverStrip's VUMeterEffect.",
     renderer: "vu-meter",
-    parameters: {},
+    parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
+    },
     tags: ["animated", "audio"],
   },
   {
@@ -527,6 +578,7 @@ export const defaultEffects = [
       "Per-band bar graph across the canvas driven by live FFT telemetry, with a peak-hold cap on each bar - ported from NightDriverStrip's SpectrumAnalyzerEffect.",
     renderer: "spectrum-bars",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       bandCount: { type: "number", min: 4, max: 64, default: 16 },
     },
     tags: ["animated", "audio"],
@@ -538,6 +590,7 @@ export const defaultEffects = [
       "Heat-diffusion fire that throws extra sparks on each detected beat - ported from NightDriverStrip's MusicalPaletteFire.",
     renderer: "musical-fire",
     parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
       cooling: { type: "number", min: 0, max: 100, default: 3 },
       sparking: { type: "number", min: 0, max: 255, default: 100 },
       sparks: { type: "number", min: 0, max: 20, default: 3 },
@@ -553,7 +606,9 @@ export const defaultEffects = [
     description:
       "One group of frequency bands per parallel strip mapping - the level bar is a real flickering fire (not a static gradient) whose extent shows the group's average amplitude, while a peak-hold marker tracks the group's loudest band, briefly holding before falling. Assign several parallel strips to build a multi-band VU wall.",
     renderer: "spectrum-band",
-    parameters: {},
+    parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
+    },
     tags: ["animated", "audio"],
   },
   // {

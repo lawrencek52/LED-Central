@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { EffectRenderService } from "./effect-render-service.js";
+import {
+  EffectRenderService,
+  starfieldAngle,
+  starfieldExitDistance,
+} from "./effect-render-service.js";
 
 test("renders a solid effect across the canvas", () => {
   const frame = new EffectRenderService().render({
@@ -88,6 +92,63 @@ test("renders visible Starfield stars on a one-row canvas", () => {
     timestamp: 500,
   });
   assert.ok(frame.pixels.some((pixel) => pixel.some((channel) => channel > 0)));
+});
+
+test("starfield keeps showing roughly starCount stars well after they would have originally all flown offscreen", () => {
+  const service = new EffectRenderService();
+  const effect = {
+    renderer: "starfield",
+    parameters: { starCount: { default: 100 } },
+  };
+  const canvas = { width: 100, height: 1 };
+  const countLit = (timeSeconds) => {
+    const frame = service.render({ effect, canvas, parameters: { timeSeconds } });
+    return frame.pixels.filter((pixel) => pixel.some((channel) => channel > 0)).length;
+  };
+  // Every star's fixed lifespan is at most 9s (3 + 6), so by the later
+  // samples every star has respawned many times over - the old code (which
+  // never respawned) would trend toward zero lit pixels here since stars
+  // would have traveled off-canvas long ago with nothing replacing them.
+  // Two stars can collide onto the same pixel, so the lit count runs below
+  // starCount even in steady state - just check it stays in a stable band
+  // rather than decaying away.
+  for (const timeSeconds of [0.5, 1, 5, 20, 100, 500, 2000]) {
+    const lit = countLit(timeSeconds);
+    assert.ok(
+      lit >= 30 && lit <= 100,
+      `expected a stable ~30-100 lit pixels at t=${timeSeconds}, got ${lit}`,
+    );
+  }
+});
+
+test("starfieldExitDistance finds the exact distance to the canvas edge along a heading", () => {
+  // Pure +x heading from center on a wide, 1-row strip: exits at the x edge,
+  // scaled by the same width/height aspect factor the position formula uses.
+  const width = 100;
+  const height = 1;
+  const scale = width / height / 2; // 50
+  const exitRight = starfieldExitDistance(width / 2, 0, 0, width, height);
+  assert.ok(Math.abs(exitRight - (width - 1 - width / 2) / scale) < 1e-9);
+
+  // A heading with no x or y component on a 1-row strip (vy forced to 0
+  // there too) never reaches an edge - falls back to a finite value instead
+  // of Infinity/NaN so the star doesn't freeze forever.
+  const stuck = starfieldExitDistance(width / 2, 0, Math.PI / 2, width, height);
+  assert.equal(stuck, 1);
+});
+
+test("starfield's left/right origin restricts stars to the hemisphere that actually enters the canvas", () => {
+  for (let seed = 0; seed < 50; seed += 1) {
+    const unitRandom = seed / 50;
+    const leftAngle = starfieldAngle("left", unitRandom);
+    const rightAngle = starfieldAngle("right", unitRandom);
+    // "left" (origin at x=0) must always move toward increasing x; "right"
+    // (origin at the far edge) must always move toward decreasing x -
+    // otherwise a star would head straight off the strip it starts on and
+    // never appear at all.
+    assert.ok(Math.cos(leftAngle) >= -1e-9);
+    assert.ok(Math.cos(rightAngle) <= 1e-9);
+  }
 });
 
 test("renders parallel mappings as independent strip effects", () => {
@@ -200,6 +261,52 @@ test("nds-bouncing-balls' mirrored output doesn't depend on reversed (both ends 
     parameters: { timeSeconds: 3.7 },
   });
   assert.deepEqual(reversed.pixels, notReversed.pixels);
+});
+
+function cylonParameters(overrides = {}) {
+  return {
+    speed: { default: 1 },
+    eyeCount: { default: 2 },
+    eyeColors: {
+      default: {
+        colors: ["#ff0000", "#00ff00", "#0000ff", "#00ffff", "#ff00ff", "#ffff00"],
+      },
+    },
+    ...overrides,
+  };
+}
+
+test("cylon's default 2-eye scanner mirrors the same sweep (matches the original Silon look)", () => {
+  const width = 20;
+  const service = new EffectRenderService();
+  const effect = { renderer: "cylon", parameters: cylonParameters() };
+  for (const timestamp of [0, 137, 812, 2001]) {
+    const frame = service.render({ effect, canvas: { width, height: 1 }, timestamp });
+    const redIndex = frame.pixels.findIndex((p) => p[0] === 255 && p[1] === 0);
+    const greenIndex = frame.pixels.findIndex((p) => p[1] === 255 && p[0] === 0);
+    assert.ok(redIndex >= 0 && greenIndex >= 0);
+    // The second eye is the first eye's sweep mirrored (a half-period phase
+    // shift), same as the original two-eye scanner.
+    assert.equal(redIndex + greenIndex, width - 1);
+  }
+});
+
+test("cylon draws up to 6 independently colored, evenly staggered eyes", () => {
+  const width = 30;
+  const service = new EffectRenderService();
+  const effect = {
+    renderer: "cylon",
+    parameters: cylonParameters({ eyeCount: { default: 6 } }),
+  };
+  const frame = service.render({
+    effect,
+    canvas: { width, height: 1 },
+    timestamp: 123,
+  });
+  const litColors = frame.pixels.filter((p) => p.some((c) => c > 0));
+  assert.equal(litColors.length, 6);
+  const distinctColors = new Set(litColors.map((c) => c.join(",")));
+  assert.equal(distinctColors.size, 6);
 });
 
 test("twinkle-stars uses its configured palette after the ignition flash", () => {

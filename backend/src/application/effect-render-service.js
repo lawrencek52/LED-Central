@@ -22,16 +22,29 @@ export class EffectRenderService {
       ...defaultParameters(effect.parameters),
       ...parameters,
     };
+    const pixels = renderCanvasEffect({
+      renderer,
+      canvas,
+      parameters: resolvedParameters,
+      timestamp,
+    });
     return {
       timestamp,
-      pixels: renderCanvasEffect({
-        renderer,
-        canvas,
-        parameters: resolvedParameters,
-        timestamp,
-      }),
+      pixels: applyBrightness(pixels, resolvedParameters.brightness),
     };
   }
+}
+
+// Applied once, after rendering, to every effect's output - a uniform final
+// scale rather than each renderer implementing its own, so every effect gets
+// a brightness control for free (including ones whose schema doesn't declare
+// a `brightness` parameter: it just defaults to 100/no-op here).
+function applyBrightness(pixels, brightnessParameter) {
+  const brightness = clamp(Number(brightnessParameter ?? 100), 0, 100) / 100;
+  if (brightness === 1) return pixels;
+  return pixels.map((pixel) =>
+    pixel.map((channel) => Math.round(channel * brightness)),
+  );
 }
 
 function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
@@ -184,7 +197,6 @@ const renderers = {
   },
   "palette-scroll": ({ width, height, parameters, timestamp }) => {
     const palette = normalizePalette(parameters.palette);
-    const brightness = clamp(Number(parameters.brightness ?? 100), 0, 100) / 100;
     const density = Math.max(0.1, Number(parameters.density ?? 1));
     const scrollSpeed = Number(parameters.ledScrollSpeed ?? 0);
     const colorRate = Number(parameters.ledColorPerSecond ?? 0);
@@ -206,16 +218,13 @@ const renderers = {
       );
       const palettePhase = (colorOffset + index * colorIncrement) % 1;
       const color = interpolatePalette(palette, palettePhase);
-      const brightened = color.map((channel) =>
-        Math.round(channel * brightness),
-      );
 
       for (let offset = 0; offset < dotSize; offset += 1) {
         const target = (pixelIndex + offset) % length;
-        pixels[target + (mirrored ? Math.floor(center) : 0)] = brightened;
+        pixels[target + (mirrored ? Math.floor(center) : 0)] = color;
         if (mirrored) {
           const mirrorIndex = Math.floor(center - target);
-          pixels[mirrorIndex] = brightened;
+          pixels[mirrorIndex] = color;
         }
       }
     }
@@ -223,31 +232,64 @@ const renderers = {
   },
   starfield: ({ width, height, parameters, timestamp }) => {
     const starCount = Math.max(0, Number(parameters.starCount ?? 0));
+    const origin = parameters.origin ?? "center";
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
     const randomSeed = Number(parameters.randomSeed ?? 0);
-    const rng = mulberry32(starCount * 97 + width + height + randomSeed);
+    const originX = origin === "left" ? 0 : origin === "right" ? width - 1 : width / 2;
+    const originY = height / 2;
+
     for (let i = 0; i < starCount; i += 1) {
-      const speed = 5 + rng() * 15;
-      const angle = rng() * Math.PI * 2;
+      // Stable per-star identity: how long this star's journey from the
+      // origin to the edge takes, and where in that cycle it starts (staggered
+      // so stars don't all restart in lockstep) - independent of elapsedSeconds,
+      // so it stays fixed across renders for a given star index.
+      const starRng = mulberry32(randomSeed * 97 + i * 7919 + width + height);
+      const lifespanSeconds = 3 + starRng() * 6;
+      const phaseOffset = starRng() * lifespanSeconds;
+      const cycle = elapsedSeconds + phaseOffset;
+      const lifeIndex = Math.floor(cycle / lifespanSeconds);
+      const cyclePosition =
+        ((cycle % lifespanSeconds) + lifespanSeconds) % lifespanSeconds;
+
+      // A star travels in a straight line from the origin out to the edge and
+      // then instantly restarts on a fresh random heading/color instead of
+      // traveling forever and vanishing once offscreen (the previous
+      // behavior - once every star had flown off, none ever came back) -
+      // keeps roughly `starCount` stars visible at any moment instead of the
+      // display slowly emptying out to black. Its speed is derived (not
+      // random) from its own heading so it reaches its own edge at a random
+      // point in the back half of its lifespan - a random flat speed would
+      // reach the edge almost instantly on a wide, short strip (the x/y
+      // formula below stretches x distance by width/height) and sit
+      // offscreen, invisible, for most of its cycle.
+      const spawnRng = mulberry32(
+        randomSeed * 97 + i * 7919 + lifeIndex * 104729 + width + height,
+      );
+      const angle = starfieldAngle(origin, spawnRng());
+      const exitDistance = starfieldExitDistance(
+        originX,
+        originY,
+        angle,
+        width,
+        height,
+      );
+      const exitFraction = 0.5 + spawnRng() * 0.5;
+      const speed = exitDistance / (lifespanSeconds * exitFraction);
+      const brightness = Math.floor(28 + spawnRng() * 227);
+      const color =
+        spawnRng() < 0.5
+          ? saturatedColor(spawnRng)
+          : [brightness, brightness, brightness];
+
+      const distance = speed * cyclePosition;
       const x = Math.floor(
-        width / 2 +
-          (Math.cos(angle) *
-            speed *
-            elapsedSeconds *
-            (width / Math.max(1, height))) /
-            2,
+        originX +
+          (Math.cos(angle) * distance * (width / Math.max(1, height))) / 2,
       );
       const y = Math.floor(
-        height === 1
-          ? 0
-          : height / 2 + Math.sin(angle) * speed * elapsedSeconds,
+        height === 1 ? 0 : originY + Math.sin(angle) * distance,
       );
-      const brightness = Math.floor(28 + rng() * 227);
-      const color =
-        rng() < 0.5
-          ? saturatedColor(rng)
-          : [brightness, brightness, brightness];
       if (x >= 0 && x < width && y >= 0 && y < height)
         pixels[y * width + x] = color;
     }
@@ -474,10 +516,7 @@ const renderers = {
   },
   "warm-glow": ({ width, height, parameters }) => {
     const kelvin = clamp(Number(parameters.kelvin ?? 4000), 1000, 12000);
-    const brightness = clamp(Number(parameters.brightness ?? 100), 0, 100) / 100;
-    const color = kelvinToRgb(kelvin).map((channel) =>
-      Math.round(channel * brightness),
-    );
+    const color = kelvinToRgb(kelvin);
     return Array.from({ length: width * height }, () => color);
   },
   fire: ({ width, height, parameters, timestamp }) => {
@@ -822,27 +861,26 @@ const renderers = {
     }
     return pixels;
   },
-  silon: ({ width, height, parameters, timestamp }) => {
+  cylon: ({ width, height, parameters, timestamp }) => {
     const speed = Math.max(0.1, Number(parameters.speed ?? 1));
+    const eyeCount = clamp(Math.round(Number(parameters.eyeCount ?? 2)), 1, 6);
+    const colors = normalizePalette(parameters.eyeColors);
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const period = Math.max(1, width - 1) * 2;
     const seconds = timestamp / 1000;
-    const cycle = (seconds * speed * 20) % period;
-    const offset = cycle < period / 2 ? cycle : period - cycle;
-    const pos = Math.round(offset);
-    for (let y = 0; y < height; y += 1) {
-      blendChannel(
-        pixels,
-        y * width + Math.min(width - 1, pos),
-        [255, 0, 0],
-        1,
-      );
-      blendChannel(
-        pixels,
-        y * width + Math.max(0, width - 1 - pos),
-        [0, 255, 0],
-        1,
-      );
+    const baseCycle = (seconds * speed * 20) % period;
+    // Each eye rides the same back-and-forth sweep, evenly staggered around
+    // the cycle - eyeCount:2 exactly reproduces the original two-eye Silon
+    // scanner (a phase shift of half the period turns one eye's sweep into
+    // the mirror image of the other's).
+    for (let eye = 0; eye < eyeCount; eye += 1) {
+      const cycle = (baseCycle + (eye * period) / eyeCount) % period;
+      const offset = cycle < period / 2 ? cycle : period - cycle;
+      const pos = clamp(Math.round(offset), 0, width - 1);
+      const color = colors[eye % colors.length];
+      for (let y = 0; y < height; y += 1) {
+        blendChannel(pixels, y * width + pos, color, 1);
+      }
     }
     return pixels;
   },
@@ -1513,6 +1551,33 @@ function bouncingBallPosition(elapsedSeconds, dampening, width) {
     remaining -= bounceDuration;
   }
   return 0;
+}
+
+// A "left"/"right" origin restricts stars to the hemisphere that actually
+// moves them into the visible canvas (a star born at x=0 heading further
+// left would just be invisible forever) - "center" keeps the full circle.
+export function starfieldAngle(origin, unitRandom) {
+  if (origin === "left") return -Math.PI / 2 + unitRandom * Math.PI;
+  if (origin === "right") return Math.PI / 2 + unitRandom * Math.PI;
+  return unitRandom * Math.PI * 2;
+}
+
+// How far (in the same "distance" units the position formula above scales
+// into x/y pixels) a star travels along `angle` from the origin before it
+// exits the canvas - i.e. the exact distance at which its x or y coordinate
+// first reaches an edge. Used to derive a star's speed from its own heading
+// rather than picking a flat random speed, since the position formula's
+// width/height aspect correction makes near-horizontal headings exit far
+// sooner (in distance terms) than near-vertical ones on a wide, short strip.
+export function starfieldExitDistance(originX, originY, angle, width, height) {
+  const vx = (Math.cos(angle) * (width / Math.max(1, height))) / 2;
+  const vy = height === 1 ? 0 : Math.sin(angle);
+  let best = Infinity;
+  if (vx > 1e-9) best = Math.min(best, (width - 1 - originX) / vx);
+  else if (vx < -1e-9) best = Math.min(best, (0 - originX) / vx);
+  if (vy > 1e-9) best = Math.min(best, (height - 1 - originY) / vy);
+  else if (vy < -1e-9) best = Math.min(best, (0 - originY) / vy);
+  return Number.isFinite(best) && best > 0 ? best : 1;
 }
 
 function saturatedColor(rng) {
