@@ -879,19 +879,20 @@ test("spectrum-band's neighborBlend correlates each strip's fire with its neighb
   assert.deepEqual(row0, row2);
 });
 
-// Strip spacing is set huge (relative to explosion radius) so no particle's
-// sideways drift ever rounds to a different row - keeps these single-row,
-// phase-timing-focused tests from losing particles off the only row that
-// exists, independent of the dedicated cross-strip spreading test below.
+// Strip spacing ratio is set huge (relative to explosion radius) so no
+// particle's sideways drift ever rounds to a different row - keeps these
+// single-row, phase-timing-focused tests from losing particles off the only
+// row that exists, independent of the dedicated cross-strip spreading test
+// below. stripSpacingRatio lives on the canvas, not the effect parameters
+// (see renderCanvasEffect), so test canvases set it explicitly too.
 const TEST_LED_SPACING_CM = 2;
-const TEST_STRIP_SPACING_CM = 100000;
+const TEST_STRIP_SPACING_RATIO = 50000;
 
 function rocketParameters(overrides = {}) {
   return {
     launchIntervalSeconds: { default: 20 }, // wide enough that only one event is ever in play
     reversed: { default: false },
     ledSpacingCm: { default: TEST_LED_SPACING_CM },
-    stripSpacingCm: { default: TEST_STRIP_SPACING_CM },
     palette: { default: { colors: ["#ff0000"] } },
     ...overrides,
   };
@@ -925,7 +926,7 @@ test("makeFireworkEvent produces valid, in-range fields deterministically from i
 test("rocket-fireworks: the rocket dims as it climbs toward apogee, then something is visible at the burst", () => {
   const service = new EffectRenderService();
   const width = 100;
-  const canvas = { width, height: 1 };
+  const canvas = { width, height: 1, stripSpacingRatio: TEST_STRIP_SPACING_RATIO };
   const event = makeTestEvent(0, width, [[255, 0, 0]]);
   const effect = { renderer: "rocket-fireworks", parameters: rocketParameters() };
 
@@ -960,7 +961,7 @@ test("rocket-fireworks: the rocket dims as it climbs toward apogee, then somethi
 test("rocket-fireworks: with audio available, pauses at apogee until a beat arrives instead of exploding immediately", () => {
   const service = new EffectRenderService();
   const width = 100;
-  const canvas = { width, height: 1 };
+  const canvas = { width, height: 1, stripSpacingRatio: TEST_STRIP_SPACING_RATIO };
   const event = makeTestEvent(0, width, [[255, 0, 0]]);
   const effect = { renderer: "rocket-fireworks", parameters: rocketParameters() };
   const startedAtMs = 0;
@@ -1001,7 +1002,7 @@ test("rocket-fireworks: with audio available, pauses at apogee until a beat arri
 test("rocket-fireworks: a rocket stuck waiting for a beat through silence explodes anyway after the wait cap", () => {
   const service = new EffectRenderService();
   const width = 100;
-  const canvas = { width, height: 1 };
+  const canvas = { width, height: 1, stripSpacingRatio: TEST_STRIP_SPACING_RATIO };
   const event = makeTestEvent(0, width, [[255, 0, 0]]);
   const effect = { renderer: "rocket-fireworks", parameters: rocketParameters() };
   const apexAtSeconds = event.launchTime + event.tApex;
@@ -1032,7 +1033,7 @@ test("rocket-fireworks: a rocket stuck waiting for a beat through silence explod
 test("rocket-fireworks' reversed parameter flips which end of the strip is the ground/launch point", () => {
   const service = new EffectRenderService();
   const width = 100;
-  const canvas = { width, height: 1 };
+  const canvas = { width, height: 1, stripSpacingRatio: TEST_STRIP_SPACING_RATIO };
   const event = makeTestEvent(0, width, [[255, 0, 0]]);
   const earlyAscentSeconds = event.tApex * 0.1;
   const forward = service.render({
@@ -1063,6 +1064,7 @@ test("rocket-fireworks' explosions genuinely spread sideways onto neighboring st
   const canvas = {
     width,
     height: rows,
+    stripSpacingRatio: 40.64 / 1.667, // the user's real wall
     mappings: Array.from({ length: rows }, (_, i) => ({
       controllerId: `deck-${i}`,
       stripIndex: i,
@@ -1078,7 +1080,6 @@ test("rocket-fireworks' explosions genuinely spread sideways onto neighboring st
     parameters: {
       launchIntervalSeconds: { default: 3 },
       reversed: { default: false },
-      stripSpacingCm: { default: 40.64 }, // the user's real wall
       ledSpacingCm: { default: 1.667 },
       palette: { default: { colors: ["#ff0000"] } },
     },
@@ -1109,6 +1110,7 @@ test("rocket-fireworks: strips show different content over time (rockets origina
   const canvas = {
     width: 100,
     height: 3,
+    stripSpacingRatio: TEST_STRIP_SPACING_RATIO,
     mappings: Array.from({ length: 3 }, (_, i) => ({
       controllerId: `deck-${i}`,
       stripIndex: i,
@@ -1119,7 +1121,7 @@ test("rocket-fireworks: strips show different content over time (rockets origina
       height: 1,
     })),
   };
-  // Huge stripSpacingCm keeps this test focused on "different strips show
+  // Huge stripSpacingRatio keeps this test focused on "different strips show
   // different content" without also depending on the cross-strip spreading
   // covered by the dedicated test above.
   const effect = {

@@ -97,3 +97,47 @@ test("creates canvases and rejects stale revisions", async (t) => {
   assert.deepEqual(deleted.body, { success: true });
   assert.deepEqual(stoppedCanvases, ["front"]);
 });
+
+test("accepts a canvas's strip spacing ratio and rejects a non-positive one", async (t) => {
+  const canvases = new Map();
+  const canvasService = {
+    list: () => [...canvases.values()],
+    get: (id) => canvases.get(id) ?? null,
+    create: (input) => {
+      const canvas = { id: "deck8", revision: 1, ...input };
+      canvases.set(canvas.id, canvas);
+      return canvas;
+    },
+    update: () => null,
+    remove: () => false,
+  };
+  const server = createServer(createApp({ canvasService })).listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(() => server.close());
+
+  const created = await request(server, "/api/canvases", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Deck8",
+      width: 215,
+      height: 8,
+      mappings: [],
+      stripSpacingRatio: 24.38,
+    }),
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.stripSpacingRatio, 24.38);
+
+  const rejected = await request(server, "/api/canvases", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Bad ratio",
+      width: 20,
+      height: 1,
+      mappings: [],
+      stripSpacingRatio: 0,
+    }),
+  });
+  assert.equal(rejected.status, 400);
+  assert.equal(rejected.body.details.stripSpacingRatio, "must be a positive number");
+});

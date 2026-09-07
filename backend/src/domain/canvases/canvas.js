@@ -1,6 +1,13 @@
 export function normalizeCanvas(canvas) {
   return {
     ...canvas,
+    // Ratio of strip-to-strip spacing to LED-to-LED spacing along one strip -
+    // a fact about the physical wall this canvas represents (1:1 for a
+    // regular matrix; e.g. ~24.38:1 for strips spaced far apart with densely
+    // packed LEDs), used by effects that need real-world geometry to spread
+    // something sideways across strips (e.g. rocket-fireworks).
+    stripSpacingRatio:
+      Number(canvas.stripSpacingRatio) > 0 ? Number(canvas.stripSpacingRatio) : 1,
     mappings: canvas.mappings.map(mapping => ({
       ...mapping,
       layout: mapping.layout || 'series',

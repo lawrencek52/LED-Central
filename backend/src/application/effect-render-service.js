@@ -55,7 +55,10 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
     return renderer({
       width: canvas.width,
       height: canvas.height,
-      parameters,
+      parameters: {
+        ...parameters,
+        stripSpacingRatio: canvas.stripSpacingRatio ?? 1,
+      },
       timestamp,
     });
   }
@@ -92,6 +95,7 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
         // slice of the audio data.
         mappingOrdinal,
         stripCount: parallelMappings.length,
+        stripSpacingRatio: canvas.stripSpacingRatio ?? 1,
       },
       timestamp,
     });
@@ -309,11 +313,14 @@ const renderers = {
   // a row is the ground/launch point (near the controller, matching Fire's
   // own default direction) unless `reversed`. A rocket launches from one
   // random strip and its explosion genuinely spreads sideways into
-  // neighboring strips - not just up/down its own strip - using the real
-  // physical spacing (`stripSpacingCm` between strips, `ledSpacingCm` between
-  // LEDs on one strip) to convert a real, physically circular 2D burst into
-  // this grid's very different resolution on each axis (LEDs are typically
-  // packed far more densely along a strip than strips are spaced apart).
+  // neighboring strips - not just up/down its own strip - using the canvas's
+  // own `stripSpacingRatio` (strip-to-strip spacing divided by LED-to-LED
+  // spacing along one strip) to convert a real, physically circular 2D burst
+  // into this grid's very different resolution on each axis (LEDs are
+  // typically packed far more densely along a strip than strips are spaced
+  // apart - a wall of strips 40.64cm apart with 1.667cm LED pitch has a ratio
+  // of ~24.38). The ratio lives on the canvas (it's a fact about the
+  // physical wall, not this effect) rather than as an effect parameter.
   //
   // Because a particle can end up on a different physical strip than the one
   // it launched from, every strip's independent render call (each parallel
@@ -346,8 +353,11 @@ const renderers = {
       0.5,
       Number(parameters.launchIntervalSeconds ?? 3),
     );
-    const stripSpacingCm = Math.max(0.1, Number(parameters.stripSpacingCm ?? 40.64));
     const ledSpacingCm = Math.max(0.1, Number(parameters.ledSpacingCm ?? 1.667));
+    // renderCanvasEffect injects this from the canvas definition (default 1,
+    // i.e. a regular matrix where strips are as far apart as LEDs).
+    const stripSpacingRatio = Math.max(0.01, Number(parameters.stripSpacingRatio ?? 1));
+    const stripSpacingCm = ledSpacingCm * stripSpacingRatio;
     const reversed = Boolean(parameters.reversed);
     // Deliberately *not* `parameters.randomSeed` - renderCanvasEffect
     // overwrites that per parallel mapping (stableSeed(controllerId:

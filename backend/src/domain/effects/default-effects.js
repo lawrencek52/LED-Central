@@ -140,13 +140,12 @@ export const defaultEffects = [
     id: "rocket-fireworks",
     name: "Rocket Fireworks",
     description:
-      "A rocket launches on a random strip, climbs and slows under gravity, then bursts into 10-100 particles that spread sideways onto neighboring strips as well as along the strip - genuinely circular in real space, using the physical strip/LED spacing to convert it onto the grid. Particles drift, burn and fade, occasionally flaring brighter first or (rarely) flashing white right as they burn out. With audio available, a rocket pauses at apogee for the next beat before exploding. Several overlapping shows can be in flight across the wall at once.",
+      "A rocket launches on a random strip, climbs and slows under gravity, then bursts into 10-100 particles that spread sideways onto neighboring strips as well as along the strip - genuinely circular in real space, using the canvas's strip spacing ratio to convert it onto the grid. Particles drift, burn and fade, occasionally flaring brighter first or (rarely) flashing white right as they burn out. With audio available, a rocket pauses at apogee for the next beat before exploding. Several overlapping shows can be in flight across the wall at once.",
     renderer: "rocket-fireworks",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
       launchIntervalSeconds: { type: "number", min: 0.5, max: 15, default: 3 },
       reversed: { type: "boolean", default: false },
-      stripSpacingCm: { type: "number", min: 0.5, max: 500, default: 40.64 },
       ledSpacingCm: { type: "number", min: 0.1, max: 50, default: 1.667 },
       showSeed: { type: "number", min: 0, max: 1000, default: 0 },
       palette: {

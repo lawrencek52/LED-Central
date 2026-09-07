@@ -39,7 +39,18 @@ function validateCanvasPayload(body, { partial = false } = {}) {
     )
       errors.mappings = "must contain valid strip mappings";
   }
-  if (partial && !fields.some((field) => payload[field] !== undefined))
+  if (
+    payload.stripSpacingRatio !== undefined &&
+    (typeof payload.stripSpacingRatio !== "number" ||
+      !Number.isFinite(payload.stripSpacingRatio) ||
+      payload.stripSpacingRatio <= 0)
+  )
+    errors.stripSpacingRatio = "must be a positive number";
+  if (
+    partial &&
+    !fields.some((field) => payload[field] !== undefined) &&
+    payload.stripSpacingRatio === undefined
+  )
     errors.body = "must include at least one canvas field";
   if (
     Number.isInteger(payload.width) &&
@@ -69,6 +80,9 @@ function validateCanvasPayload(body, { partial = false } = {}) {
     ...(payload.width === undefined ? {} : { width: payload.width }),
     ...(payload.height === undefined ? {} : { height: payload.height }),
     ...(payload.mappings === undefined ? {} : { mappings: payload.mappings }),
+    ...(payload.stripSpacingRatio === undefined
+      ? {}
+      : { stripSpacingRatio: payload.stripSpacingRatio }),
   };
 }
 

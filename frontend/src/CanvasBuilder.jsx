@@ -6,6 +6,7 @@ const blankCanvas = {
   width: 215,
   height: 1,
   mode: "series",
+  stripSpacingRatio: 1,
   mappings: [],
 };
 
@@ -107,6 +108,8 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
         throw new Error("Canvas width must be a positive integer.");
       if (!Number.isInteger(Number(draft.height)) || Number(draft.height) < 1)
         throw new Error("Canvas height must be a positive integer.");
+      if (!(Number(draft.stripSpacingRatio) > 0))
+        throw new Error("Strip spacing ratio must be a positive number.");
       const mappings = draft.mappings.map((mapping) => ({
         ...mapping,
         x: Number(mapping.x || 0),
@@ -124,6 +127,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
           Number(draft.height),
           ...mappings.map((mapping) => mapping.y + mapping.height),
         ),
+        stripSpacingRatio: Number(draft.stripSpacingRatio),
         mappings,
       };
       const saved =
@@ -280,6 +284,24 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                 }
               />
             </label>
+            {draft.mode === "parallel" && (
+              <label>
+                Strip spacing ratio
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={draft.stripSpacingRatio ?? 1}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      stripSpacingRatio: event.target.value,
+                    })
+                  }
+                  title="Strip-to-strip spacing divided by LED-to-LED spacing along a strip. 1 for a regular matrix; e.g. 24.38 for strips 40.64cm apart with 1.667cm LED pitch."
+                />
+              </label>
+            )}
             <button
               className="secondary-button"
               type="button"
