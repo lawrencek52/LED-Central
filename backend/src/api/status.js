@@ -65,7 +65,7 @@ export function createStatusRouter({
             ? (playbackService.effectService.get(session.effectId)?.name ??
               session.effectId)
             : "Inactive",
-          framesPerSecond: session ? playbackService.frameRate : 0,
+          framesPerSecond: session ? session.frameRate : 0,
           strips,
         };
       });
