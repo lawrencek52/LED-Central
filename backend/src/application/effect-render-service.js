@@ -304,6 +304,99 @@ const renderers = {
   },
   fireworks: ({ width, height, parameters, timestamp }) =>
     renderNdsCppFireworks({ width, height, parameters, timestamp }),
+  // An original design (not a NightDriverStrip port), built for a wall of
+  // vertical parallel strips: each row is one physical strip, index 0 within
+  // a row is the ground/launch point (near the controller, matching Fire's
+  // own default direction) unless `reversed`. A rocket launches from one
+  // random strip and its explosion genuinely spreads sideways into
+  // neighboring strips - not just up/down its own strip - using the real
+  // physical spacing (`stripSpacingCm` between strips, `ledSpacingCm` between
+  // LEDs on one strip) to convert a real, physically circular 2D burst into
+  // this grid's very different resolution on each axis (LEDs are typically
+  // packed far more densely along a strip than strips are spaced apart).
+  //
+  // Because a particle can end up on a different physical strip than the one
+  // it launched from, every strip's independent render call (each parallel
+  // mapping is dispatched separately, with no visibility into any other
+  // mapping's data - see spectrum-band's neighborBlend for the same
+  // constraint) must compute the *entire* canvas-wide explosion field and
+  // then keep only the points landing on its own row - the same redundant-
+  // recomputation approach spectrum-band uses, and memoized the same way
+  // (computeFireworkPoints below) since it's identical across every one of
+  // this tick's per-mapping calls.
+  //
+  // Everything is generated on demand from a deterministic per-event-index
+  // RNG rather than any persisted state - the same "make an event, check
+  // whether `elapsedSeconds` falls in one of its phases" approach
+  // `fire`/Starfield already use for stateless, replayable rendering. A
+  // rocket's own ascent is entirely predictable from its launch time, but
+  // "pause at apogee until the next beat" is not - it reads the live
+  // `audio.lastBeatAt` snapshot directly, the same way vu-meter/musical-
+  // fire's beat flash does, capped at `MAX_APEX_WAIT_SECONDS` so a rocket
+  // can't wait forever through a quiet passage (and so every event's active
+  // window stays bounded, which the window scan below depends on).
+  "rocket-fireworks": ({ width, height, parameters, timestamp }) => {
+    const audio = parameters.audio;
+    const palette = normalizePalette(
+      parameters.palette ?? {
+        colors: ["#ff0000", "#00ff00", "#0000ff", "#00ffff", "#ff00ff", "#ffff00"],
+      },
+    );
+    const launchIntervalSeconds = Math.max(
+      0.5,
+      Number(parameters.launchIntervalSeconds ?? 3),
+    );
+    const stripSpacingCm = Math.max(0.1, Number(parameters.stripSpacingCm ?? 40.64));
+    const ledSpacingCm = Math.max(0.1, Number(parameters.ledSpacingCm ?? 1.667));
+    const reversed = Boolean(parameters.reversed);
+    // Deliberately *not* `parameters.randomSeed` - renderCanvasEffect
+    // overwrites that per parallel mapping (stableSeed(controllerId:
+    // stripIndex), so every strip's own strip gets independent flicker in
+    // effects like `fire`) before this renderer ever sees it. Every strip's
+    // independent call here must derive the exact same canvas-wide event
+    // sequence to agree on which rows a particle should appear on, so it
+    // needs its own, unclobbered parameter name instead.
+    const randomSeed = Number(parameters.showSeed ?? 0);
+    const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    const startedAtMs = timestamp - elapsedSeconds * 1000;
+    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+
+    // A canvas made of parallel-mapped strips is one row per strip; a direct
+    // multi-row matrix canvas (no parallel mappings) renders every row in
+    // this one call instead.
+    const isParallel = parameters.stripCount !== undefined;
+    const rows = isParallel
+      ? Math.max(1, Math.round(Number(parameters.stripCount)))
+      : Math.max(1, height);
+    const onlyRow = isParallel
+      ? clamp(Math.round(Number(parameters.mappingOrdinal ?? 0)), 0, rows - 1)
+      : null;
+
+    const points = memoizedFireworkPoints(
+      [rows, width, randomSeed, launchIntervalSeconds, stripSpacingCm, ledSpacingCm, elapsedSeconds, audio?.available, audio?.lastBeatAt].join(":"),
+      () =>
+        computeFireworkPoints({
+          rows,
+          width,
+          palette,
+          launchIntervalSeconds,
+          stripSpacingCm,
+          ledSpacingCm,
+          randomSeed,
+          elapsedSeconds,
+          startedAtMs,
+          audio,
+        }),
+    );
+
+    for (const point of points) {
+      if (onlyRow !== null && point.row !== onlyRow) continue;
+      const pixelRow = isParallel ? 0 : point.row;
+      const displayCol = reversed ? width - 1 - point.col : point.col;
+      plotBlended1DRow(pixels, width, pixelRow, displayCol, point.color);
+    }
+    return pixels;
+  },
   "fireworks-legacy": ({ width, height, parameters, timestamp }) => {
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const maxSpeed = Number(parameters.maxSpeed ?? 175);
@@ -1777,6 +1870,257 @@ function plotBlended1DAllRows(pixels, width, height, x, color) {
     const rowOffset = y * width;
     blendChannel(pixels, rowOffset + lower, color, 1 - frac);
     blendChannel(pixels, rowOffset + upper, color, frac);
+  }
+}
+
+// Same anti-aliased column blend as plotBlended1D, but into one specific row
+// of a taller buffer - used by rocket-fireworks, where (unlike
+// plotBlended1DAllRows) every row runs its own independent show rather than
+// mirroring the same thing onto every row.
+function plotBlended1DRow(pixels, width, row, x, color) {
+  const clamped = Math.max(0, Math.min(width - 1, x));
+  const lower = Math.floor(clamped);
+  const upper = Math.min(width - 1, lower + 1);
+  const frac = clamped - lower;
+  const rowOffset = row * width;
+  blendChannel(pixels, rowOffset + lower, color, 1 - frac);
+  blendChannel(pixels, rowOffset + upper, color, frac);
+}
+
+const ROCKET_GRAVITY_CM = 100; // cm/sec^2 - tuned for a ~2-3s ascent up a real ~300-360cm strip
+const PARTICLE_GRAVITY_CM = 40; // gentler fall for a lingering "willow" droop on particles
+const MAX_APEX_WAIT_SECONDS = 4; // cap on pausing at apogee for a beat, so a quiet passage can't strand a rocket forever
+const MIN_PARTICLE_LIFE_SECONDS = 1.3;
+const MAX_PARTICLE_LIFE_SECONDS = 2.5;
+const MIN_EXPLOSION_RADIUS_CM = 60;
+const MAX_EXPLOSION_RADIUS_CM = 140;
+
+// Single-entry memo for computeFireworkPoints (see rocket-fireworks' use of
+// it): every render tick has exactly one set of inputs in flight across all
+// of that tick's per-mapping calls (one per parallel strip), so caching only
+// the most recent key/result fully dedupes the otherwise-redundant
+// recomputation, the same approach memoizedFireGrid uses for spectrum-band.
+let fireworkPointsCache = null;
+function memoizedFireworkPoints(key, compute) {
+  if (fireworkPointsCache?.key === key) return fireworkPointsCache.points;
+  const points = compute();
+  fireworkPointsCache = { key, points };
+  return points;
+}
+
+// Deterministically builds one rocket-and-its-explosion event from nothing
+// but its own index `n` and a canvas-wide seed - no dependency on any other
+// event, so `n`'s active window can be checked in isolation (see the window
+// scan in computeFireworkPoints below) rather than needing every earlier
+// event's history to know where this one starts. All physical distances are
+// in real centimeters (converted to strip/LED grid coordinates only at the
+// very end, in collectFireworkPoints) so a burst is genuinely circular in
+// real space despite strips and LEDs being spaced completely differently.
+export function makeFireworkEvent(
+  n,
+  canvasSeed,
+  rows,
+  width,
+  palette,
+  launchIntervalSeconds,
+  ledSpacingCm,
+) {
+  const rng = mulberry32(canvasSeed + n * 104729 + 11);
+  const jitter = (rng() - 0.5) * launchIntervalSeconds * 0.8;
+  const launchTime = n * launchIntervalSeconds + jitter;
+  const originRow = Math.floor(rng() * rows);
+  // How high this rocket climbs before exploding - most reach near the top,
+  // some noticeably lower, for visual variety.
+  const apexFraction = 0.55 + rng() * 0.45;
+  const apexHeightLed = apexFraction * (width - 1);
+  const apexHeightCm = apexHeightLed * ledSpacingCm;
+  const v0Cm = Math.sqrt(2 * ROCKET_GRAVITY_CM * apexHeightCm);
+  const tApex = v0Cm / ROCKET_GRAVITY_CM;
+
+  const particleCount = 10 + Math.floor(rng() * 91); // 10-100
+  // Usually one color; occasionally 2-4 for a multi-color burst.
+  const colorRoll = rng();
+  const colorCount =
+    colorRoll < 0.85 ? 1 : colorRoll < 0.95 ? 2 : colorRoll < 0.99 ? 3 : 4;
+  const colors = [];
+  for (let i = 0; i < colorCount; i += 1) {
+    colors.push(palette[Math.floor(rng() * palette.length)]);
+  }
+  // Phase 4: a minority of explosions have particles that flash white right
+  // as they burn out instead of just fading away.
+  const hasCrackle = rng() < 0.12;
+  const lifeSeconds =
+    MIN_PARTICLE_LIFE_SECONDS +
+    rng() * (MAX_PARTICLE_LIFE_SECONDS - MIN_PARTICLE_LIFE_SECONDS);
+  const explosionRadiusCm =
+    MIN_EXPLOSION_RADIUS_CM + rng() * (MAX_EXPLOSION_RADIUS_CM - MIN_EXPLOSION_RADIUS_CM);
+  const explosionSpeedCm = explosionRadiusCm / lifeSeconds;
+
+  const particles = [];
+  for (let i = 0; i < particleCount; i += 1) {
+    // Angles evenly spread around the full circle, then jittered - "dividing
+    // 360 degrees by the particle count, then adding some randomness".
+    const baseAngle = (i / particleCount) * Math.PI * 2;
+    const angle = baseAngle + (rng() - 0.5) * ((Math.PI * 2) / particleCount);
+    // Initial velocities random, but close to each other.
+    const speedCm = explosionSpeedCm * (0.85 + rng() * 0.3);
+    const color = colors[Math.floor(rng() * colors.length)];
+    // Phase 3: most particles just dim at a constant rate; some flare up
+    // brighter for their first stretch before dimming out.
+    const flareUp = rng() < 0.18;
+    const life = lifeSeconds * (0.8 + rng() * 0.4);
+    particles.push({ angle, speedCm, color, flareUp, life });
+  }
+
+  return { launchTime, originRow, apexHeightLed, apexHeightCm, v0Cm, tApex, particles, hasCrackle };
+}
+
+// Runs the deterministic window scan over candidate event indices and
+// collects every currently-visible point (rocket, waiting apex, or burst
+// particle) canvas-wide, in (row, col) grid coordinates - the "row" a point
+// ends up on is not necessarily the event's own originRow, since a particle
+// can drift sideways onto a neighboring strip.
+function computeFireworkPoints({
+  rows,
+  width,
+  palette,
+  launchIntervalSeconds,
+  stripSpacingCm,
+  ledSpacingCm,
+  randomSeed,
+  elapsedSeconds,
+  startedAtMs,
+  audio,
+}) {
+  // A rocket event's own worst-case duration (bounded so the window scan
+  // only ever has to check a handful of candidate events, the same trick
+  // simulateFireHeat uses to keep a stateless replay's cost constant
+  // regardless of how long the effect has been running).
+  const maxTApex = Math.sqrt((2 * (width - 1) * ledSpacingCm) / ROCKET_GRAVITY_CM);
+  const maxEventDuration = maxTApex + MAX_APEX_WAIT_SECONDS + MAX_PARTICLE_LIFE_SECONDS;
+  const windowStart =
+    Math.floor((elapsedSeconds - maxEventDuration) / launchIntervalSeconds) - 1;
+  const windowEnd = Math.ceil(elapsedSeconds / launchIntervalSeconds) + 1;
+
+  const points = [];
+  for (let n = windowStart; n <= windowEnd; n += 1) {
+    const event = makeFireworkEvent(
+      n,
+      randomSeed,
+      rows,
+      width,
+      palette,
+      launchIntervalSeconds,
+      ledSpacingCm,
+    );
+    collectFireworkPoints(event, {
+      elapsedSeconds,
+      startedAtMs,
+      audio,
+      rows,
+      width,
+      stripSpacingCm,
+      ledSpacingCm,
+      points,
+    });
+  }
+  return points;
+}
+
+// Determines whichever phase (ascending / paused at apogee / exploded
+// particles) `event` is in at `elapsedSeconds` and pushes its visible
+// point(s) into `points`, or pushes nothing if this event hasn't launched
+// yet or has completely finished.
+function collectFireworkPoints(
+  event,
+  { elapsedSeconds, startedAtMs, audio, rows, width, stripSpacingCm, ledSpacingCm, points },
+) {
+  const t = elapsedSeconds - event.launchTime;
+  if (t < 0) return;
+
+  // Phase 1: launch/ascent - a bright point climbing and slowing under
+  // gravity, dimming as it nears apogee. Stays on its own launch strip.
+  if (t < event.tApex) {
+    const velocityCm = event.v0Cm - ROCKET_GRAVITY_CM * t;
+    const positionCm = event.v0Cm * t - 0.5 * ROCKET_GRAVITY_CM * t * t;
+    const brightness = clamp(velocityCm / event.v0Cm, 0.15, 1);
+    const color = [255, 255, 255].map((channel) => Math.round(channel * brightness));
+    points.push({ row: event.originRow, col: positionCm / ledSpacingCm, color });
+    return;
+  }
+
+  // At or past apogee: with no audio, explode immediately; with audio,
+  // pause here until the next beat (or MAX_APEX_WAIT_SECONDS, whichever
+  // comes first).
+  let explodeAtElapsed;
+  const apexAtElapsed = event.launchTime + event.tApex;
+  if (!audio?.available) {
+    explodeAtElapsed = apexAtElapsed;
+  } else {
+    const apexAtMs = startedAtMs + apexAtElapsed * 1000;
+    const nowMs = startedAtMs + elapsedSeconds * 1000;
+    // The beat must fall within this event's own valid wait window - at or
+    // after its own apogee, and no later than its own MAX_APEX_WAIT_SECONDS
+    // deadline (capped again by "now", since a future beat obviously hasn't
+    // happened yet - guards against clock skew between the controller's
+    // beat-detector timestamp and this render's own timestamp, which would
+    // otherwise compute a negative tSinceExplosion below and render nothing
+    // at all instead of the waiting state). Without the upper bound, a
+    // single stale global "most recent beat" timestamp could wrongly
+    // satisfy some *other*, much older event's window too (any beat at or
+    // after that old event's own long-past apogee trivially satisfies a
+    // bare ">= apexAtMs" check), reviving an event that should have already
+    // timed out.
+    const waitDeadlineMs = apexAtMs + MAX_APEX_WAIT_SECONDS * 1000;
+    const beatArrived =
+      Number.isFinite(audio.lastBeatAt) &&
+      audio.lastBeatAt >= apexAtMs &&
+      audio.lastBeatAt <= Math.min(nowMs, waitDeadlineMs);
+    if (beatArrived) {
+      explodeAtElapsed = (audio.lastBeatAt - startedAtMs) / 1000;
+    } else if (t - event.tApex > MAX_APEX_WAIT_SECONDS) {
+      explodeAtElapsed = apexAtElapsed + MAX_APEX_WAIT_SECONDS;
+    } else {
+      // Still waiting - a dim, steady point held at apogee.
+      points.push({
+        row: event.originRow,
+        col: event.apexHeightLed,
+        color: [90, 90, 90],
+      });
+      return;
+    }
+  }
+
+  const tSinceExplosion = elapsedSeconds - explodeAtElapsed;
+  if (tSinceExplosion < 0) return; // waiting for the beat-triggered explosion
+
+  // Phases 2/3/4: burst particles traveling sideways (possibly onto
+  // neighboring strips) and along their own strip's length, burning, and
+  // occasionally flashing white right at the end.
+  for (const particle of event.particles) {
+    if (tSinceExplosion > particle.life) continue;
+    const xCm = Math.cos(particle.angle) * particle.speedCm * tSinceExplosion;
+    const yCm =
+      Math.sin(particle.angle) * particle.speedCm * tSinceExplosion -
+      0.5 * PARTICLE_GRAVITY_CM * tSinceExplosion * tSinceExplosion;
+    const row = Math.round(event.originRow + xCm / stripSpacingCm);
+    const col = event.apexHeightLed + yCm / ledSpacingCm;
+    if (row < 0 || row >= rows || col < 0 || col > width - 1) continue;
+
+    const lifeFraction = tSinceExplosion / particle.life;
+    let brightness = particle.flareUp
+      ? lifeFraction < 0.35
+        ? lifeFraction / 0.35
+        : 1 - (lifeFraction - 0.35) / 0.65
+      : 1 - lifeFraction;
+    let color = particle.color;
+    if (event.hasCrackle && lifeFraction > 0.85) {
+      color = [255, 255, 255];
+      brightness = 1;
+    }
+    brightness = clamp(brightness, 0, 1);
+    const finalColor = color.map((channel) => Math.round(channel * brightness));
+    points.push({ row, col, color: finalColor });
   }
 }
 

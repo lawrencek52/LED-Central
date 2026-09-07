@@ -5,6 +5,7 @@ import {
   starfieldAngle,
   starfieldExitDistance,
   interpolateSeries,
+  makeFireworkEvent,
 } from "./effect-render-service.js";
 
 test("renders a solid effect across the canvas", () => {
@@ -876,6 +877,274 @@ test("spectrum-band's neighborBlend correlates each strip's fire with its neighb
   // the middle row's pre-blend heat (each has only that one neighbor) - the
   // exact same proof used for `fire`'s own neighborBlend test.
   assert.deepEqual(row0, row2);
+});
+
+// Strip spacing is set huge (relative to explosion radius) so no particle's
+// sideways drift ever rounds to a different row - keeps these single-row,
+// phase-timing-focused tests from losing particles off the only row that
+// exists, independent of the dedicated cross-strip spreading test below.
+const TEST_LED_SPACING_CM = 2;
+const TEST_STRIP_SPACING_CM = 100000;
+
+function rocketParameters(overrides = {}) {
+  return {
+    launchIntervalSeconds: { default: 20 }, // wide enough that only one event is ever in play
+    reversed: { default: false },
+    ledSpacingCm: { default: TEST_LED_SPACING_CM },
+    stripSpacingCm: { default: TEST_STRIP_SPACING_CM },
+    palette: { default: { colors: ["#ff0000"] } },
+    ...overrides,
+  };
+}
+
+function makeTestEvent(n, width, palette, launchIntervalSeconds = 20) {
+  return makeFireworkEvent(n, 0, 1, width, palette, launchIntervalSeconds, TEST_LED_SPACING_CM);
+}
+
+test("makeFireworkEvent produces valid, in-range fields deterministically from its own index alone", () => {
+  const palette = [
+    [255, 0, 0],
+    [0, 255, 0],
+  ];
+  const event = makeTestEvent(0, 100, palette);
+  assert.ok(event.apexHeightLed > 0 && event.apexHeightLed <= 99);
+  assert.ok(event.originRow === 0); // only one row (rows=1) to choose from
+  assert.ok(event.tApex > 0);
+  assert.ok(event.particles.length >= 10 && event.particles.length <= 100);
+  for (const particle of event.particles) {
+    assert.ok(Number.isFinite(particle.angle));
+    assert.ok(particle.speedCm > 0);
+    assert.ok(particle.life > 0);
+    assert.ok(palette.includes(particle.color));
+  }
+  // Same index/seed/inputs -> identical event (stateless, replayable).
+  const again = makeTestEvent(0, 100, palette);
+  assert.deepEqual(event, again);
+});
+
+test("rocket-fireworks: the rocket dims as it climbs toward apogee, then something is visible at the burst", () => {
+  const service = new EffectRenderService();
+  const width = 100;
+  const canvas = { width, height: 1 };
+  const event = makeTestEvent(0, width, [[255, 0, 0]]);
+  const effect = { renderer: "rocket-fireworks", parameters: rocketParameters() };
+
+  const early = service.render({
+    effect,
+    canvas,
+    parameters: { timeSeconds: event.tApex * 0.2 },
+    timestamp: event.tApex * 200,
+  });
+  const late = service.render({
+    effect,
+    canvas,
+    parameters: { timeSeconds: event.tApex * 0.9 },
+    timestamp: event.tApex * 900,
+  });
+  const brightnessOf = (frame) =>
+    frame.pixels.reduce((sum, p) => sum + p[0] + p[1] + p[2], 0);
+  assert.ok(brightnessOf(early) > 0);
+  // Dimmer late in the ascent (closer to apogee) than early on.
+  assert.ok(brightnessOf(late) < brightnessOf(early));
+
+  // Just after apogee with no audio, it's already exploded into particles.
+  const exploded = service.render({
+    effect,
+    canvas,
+    parameters: { timeSeconds: event.tApex + 0.05 },
+    timestamp: (event.tApex + 0.05) * 1000,
+  });
+  assert.ok(exploded.pixels.some((p) => p.some(Boolean)));
+});
+
+test("rocket-fireworks: with audio available, pauses at apogee until a beat arrives instead of exploding immediately", () => {
+  const service = new EffectRenderService();
+  const width = 100;
+  const canvas = { width, height: 1 };
+  const event = makeTestEvent(0, width, [[255, 0, 0]]);
+  const effect = { renderer: "rocket-fireworks", parameters: rocketParameters() };
+  const startedAtMs = 0;
+  const apexAtMs = (event.launchTime + event.tApex) * 1000;
+
+  // Shortly after apogee, no beat has happened yet (lastBeatAt is well
+  // before apogee) - still waiting, not exploded.
+  const waiting = service.render({
+    effect,
+    canvas,
+    parameters: {
+      timeSeconds: event.tApex + 0.3,
+      audio: { available: true, lastBeatAt: 0 },
+    },
+    timestamp: startedAtMs + (event.tApex + 0.3) * 1000,
+  });
+  const litCount = (frame) => frame.pixels.filter((p) => p.some(Boolean)).length;
+  assert.ok(litCount(waiting) <= 2); // just the single waiting point
+
+  // A beat lands shortly before this render moment -> exploded and the
+  // particles have had a little time to spread out from their shared
+  // starting point (sampling exactly at the beat itself would show every
+  // particle still stacked on the same one or two starting pixels).
+  const beatTimestamp = apexAtMs + 300;
+  const renderTimestamp = beatTimestamp + 200;
+  const exploded = service.render({
+    effect,
+    canvas,
+    parameters: {
+      timeSeconds: (renderTimestamp - startedAtMs) / 1000,
+      audio: { available: true, lastBeatAt: beatTimestamp },
+    },
+    timestamp: renderTimestamp,
+  });
+  assert.ok(litCount(exploded) > 2);
+});
+
+test("rocket-fireworks: a rocket stuck waiting for a beat through silence explodes anyway after the wait cap", () => {
+  const service = new EffectRenderService();
+  const width = 100;
+  const canvas = { width, height: 1 };
+  const event = makeTestEvent(0, width, [[255, 0, 0]]);
+  const effect = { renderer: "rocket-fireworks", parameters: rocketParameters() };
+  const apexAtSeconds = event.launchTime + event.tApex;
+
+  const stillWaiting = service.render({
+    effect,
+    canvas,
+    parameters: {
+      timeSeconds: apexAtSeconds + 3.9,
+      audio: { available: true, lastBeatAt: 0 },
+    },
+    timestamp: (apexAtSeconds + 3.9) * 1000,
+  });
+  const timedOut = service.render({
+    effect,
+    canvas,
+    parameters: {
+      timeSeconds: apexAtSeconds + 4.1,
+      audio: { available: true, lastBeatAt: 0 },
+    },
+    timestamp: (apexAtSeconds + 4.1) * 1000,
+  });
+  const litCount = (frame) => frame.pixels.filter((p) => p.some(Boolean)).length;
+  assert.ok(litCount(stillWaiting) <= 2);
+  assert.ok(litCount(timedOut) > 2);
+});
+
+test("rocket-fireworks' reversed parameter flips which end of the strip is the ground/launch point", () => {
+  const service = new EffectRenderService();
+  const width = 100;
+  const canvas = { width, height: 1 };
+  const event = makeTestEvent(0, width, [[255, 0, 0]]);
+  const earlyAscentSeconds = event.tApex * 0.1;
+  const forward = service.render({
+    effect: { renderer: "rocket-fireworks", parameters: rocketParameters() },
+    canvas,
+    parameters: { timeSeconds: earlyAscentSeconds },
+    timestamp: earlyAscentSeconds * 1000,
+  });
+  const reversed = service.render({
+    effect: {
+      renderer: "rocket-fireworks",
+      parameters: rocketParameters({ reversed: { default: true } }),
+    },
+    canvas,
+    parameters: { timeSeconds: earlyAscentSeconds },
+    timestamp: earlyAscentSeconds * 1000,
+  });
+  assert.deepEqual(reversed.pixels, [...forward.pixels].reverse());
+});
+
+test("rocket-fireworks' explosions genuinely spread sideways onto neighboring strips using the real physical spacing", () => {
+  const rows = 8;
+  const width = 215;
+  const event = makeFireworkEvent(0, 0, rows, width, [[255, 0, 0]], 3, 1.667);
+  // No audio -> explodes immediately at apogee.
+  const explodeAtElapsed = event.launchTime + event.tApex;
+  const service = new EffectRenderService();
+  const canvas = {
+    width,
+    height: rows,
+    mappings: Array.from({ length: rows }, (_, i) => ({
+      controllerId: `deck-${i}`,
+      stripIndex: i,
+      layout: "parallel",
+      x: 0,
+      y: i,
+      width,
+      height: 1,
+    })),
+  };
+  const effect = {
+    renderer: "rocket-fireworks",
+    parameters: {
+      launchIntervalSeconds: { default: 3 },
+      reversed: { default: false },
+      stripSpacingCm: { default: 40.64 }, // the user's real wall
+      ledSpacingCm: { default: 1.667 },
+      palette: { default: { colors: ["#ff0000"] } },
+    },
+  };
+  const timeSeconds = explodeAtElapsed + 0.6;
+  const frame = service.render({
+    effect,
+    canvas,
+    parameters: { timeSeconds },
+    timestamp: timeSeconds * 1000,
+  });
+  const litRows = new Set();
+  for (let row = 0; row < rows; row += 1) {
+    if (frame.pixels.slice(row * width, (row + 1) * width).some((p) => p.some(Boolean))) {
+      litRows.add(row);
+    }
+  }
+  // The rocket launched on event.originRow; 0.6s after exploding, real
+  // particle speeds/angles against this exact 40.64cm strip spacing/1.667cm
+  // LED spacing carry some particles onto the immediately neighboring
+  // strips too, not just up and down the origin strip.
+  assert.ok(litRows.size > 1, `expected more than one lit strip, got rows: ${[...litRows]}`);
+  assert.ok(litRows.has(event.originRow));
+});
+
+test("rocket-fireworks: strips show different content over time (rockets originate on random strips)", () => {
+  const service = new EffectRenderService();
+  const canvas = {
+    width: 100,
+    height: 3,
+    mappings: Array.from({ length: 3 }, (_, i) => ({
+      controllerId: `deck-${i}`,
+      stripIndex: i,
+      layout: "parallel",
+      x: 0,
+      y: i,
+      width: 100,
+      height: 1,
+    })),
+  };
+  // Huge stripSpacingCm keeps this test focused on "different strips show
+  // different content" without also depending on the cross-strip spreading
+  // covered by the dedicated test above.
+  const effect = {
+    renderer: "rocket-fireworks",
+    parameters: rocketParameters({ launchIntervalSeconds: { default: 3 } }),
+  };
+  let sawDifference = false;
+  for (let timeSeconds = 0; timeSeconds < 20 && !sawDifference; timeSeconds += 0.3) {
+    const frame = service.render({
+      effect,
+      canvas,
+      parameters: { timeSeconds },
+      timestamp: timeSeconds * 1000,
+    });
+    const row0 = frame.pixels.slice(0, 100);
+    const row1 = frame.pixels.slice(100, 200);
+    const row2 = frame.pixels.slice(200, 300);
+    if (
+      JSON.stringify(row0) !== JSON.stringify(row1) ||
+      JSON.stringify(row1) !== JSON.stringify(row2)
+    ) {
+      sawDifference = true;
+    }
+  }
+  assert.ok(sawDifference, "expected the 3 parallel strips to diverge at some point over 20s");
 });
 
 // test('mp4-playback animates over time instead of showing a single still frame', () => {

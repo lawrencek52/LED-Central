@@ -143,6 +143,69 @@ test("uses a much shorter frame lookahead for audio-tagged effects than the defa
   service.stop(nonAudio.id);
 });
 
+test("an 'audio-optional' effect starts fine with no audio available, at its own requested fps", async () => {
+  const renderedParameters = [];
+  const service = new PlaybackService({
+    canvasService: baseServiceOptions().canvasService,
+    effectService: {
+      get: (id) =>
+        id === "fireworks-show"
+          ? { id, renderer: "solid", parameters: {}, tags: ["audio-optional"] }
+          : null,
+    },
+    renderService: {
+      render: ({ parameters }) => {
+        renderedParameters.push(parameters);
+        return { pixels: [[0, 0, 0]] };
+      },
+    },
+    distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
+    audioService: {
+      getCanvasAudio: () => {
+        throw new Error("should not be called when audio is unavailable");
+      },
+      hasAudioCapability: () => false,
+    },
+    idFactory: () => "session-1",
+  });
+  const session = await service.start({ canvasId: "canvas-1", effectId: "fireworks-show", fps: 33 });
+  assert.equal(session.status, "playing");
+  assert.equal(session.frameRate, 33); // its own requested fps, not paced to telemetry
+  assert.equal(renderedParameters[0].audio, undefined);
+  service.stop(session.id);
+});
+
+test("an 'audio-optional' effect receives live audio when the canvas has it, without being paced to it", async () => {
+  const service = new PlaybackService({
+    canvasService: baseServiceOptions().canvasService,
+    effectService: {
+      get: (id) =>
+        id === "fireworks-show"
+          ? { id, renderer: "solid", parameters: { color: { default: "#ffffff" } }, tags: ["audio-optional"] }
+          : null,
+    },
+    renderService: {
+      render: ({ parameters }) => {
+        renderedParameters.push(parameters);
+        return { pixels: [[0, 0, 0]] };
+      },
+    },
+    distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
+    audioService: {
+      getCanvasAudio: () => ({ available: true, lastBeatAt: 123 }),
+      hasAudioCapability: () => true,
+      getUpdateRateHz: () => 47,
+    },
+    idFactory: () => "session-1",
+  });
+  const renderedParameters = [];
+  const session = await service.start({ canvasId: "canvas-1", effectId: "fireworks-show", fps: 33 });
+  // Not re-paced to the 47Hz telemetry rate, unlike a "audio"-tagged effect.
+  assert.equal(session.frameRate, 33);
+  assert.deepEqual(renderedParameters[0].audio, { available: true, lastBeatAt: 123 });
+  service.stop(session.id);
+});
+
 test("renders and distributes an effect frame on playback start", async () => {
   const sent = [];
   const service = new PlaybackService({

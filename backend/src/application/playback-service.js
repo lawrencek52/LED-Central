@@ -37,8 +37,19 @@ export class PlaybackService {
 
   // Audio-tagged effects read live telemetry as a `parameters.audio` input (see
   // renderFrame) computed by audioService, rather than being stateful themselves.
+  // They also can't start (or pace their frame rate) without audio capability -
+  // see start()/effectiveFrameRate() below.
   requiresAudio(effect) {
     return Boolean(effect.tags?.includes("audio"));
+  }
+
+  // "audio-optional" effects (e.g. fireworks pausing at apogee for a beat) get
+  // the same live `parameters.audio` input whenever a canvas happens to have
+  // it, but - unlike "audio"-tagged effects - can start and run at their own
+  // requested frame rate with no audio available at all; they just don't get
+  // the input in that case.
+  usesAudioIfAvailable(effect) {
+    return Boolean(effect.tags?.includes("audio-optional"));
   }
 
   // Non-audio effects pre-render up to `targetQueueMs` (1500ms) ahead to smooth over
@@ -181,7 +192,10 @@ export class PlaybackService {
       ...parameters,
       timeSeconds: (timestamp - startedAt) / 1000,
     };
-    if (this.requiresAudio(effect)) {
+    if (
+      this.requiresAudio(effect) ||
+      (this.usesAudioIfAvailable(effect) && this.audioService?.hasAudioCapability(canvas))
+    ) {
       effectParameters.audio = this.audioService.getCanvasAudio(canvas);
     }
     return this.renderService.render({
