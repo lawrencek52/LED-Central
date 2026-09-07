@@ -402,3 +402,149 @@ test("restores saved playback intents after a backend restart", async () => {
   service.stopByCanvas("canvas-1");
   assert.deepEqual(intents, []);
 });
+
+test("small, consistent per-tick overhead doesn't accumulate into growing schedule drift", async () => {
+  const callTimes = [];
+  const service = new PlaybackService({
+    canvasService: {
+      get: (id) =>
+        id === "canvas-1"
+          ? {
+              id,
+              width: 1,
+              height: 1,
+              mappings: [{ controllerId: "deck-1", stripIndex: 0 }],
+            }
+          : null,
+    },
+    effectService: {
+      get: (id) =>
+        id === "solid"
+          ? {
+              id,
+              renderer: "solid",
+              parameters: { color: { default: "#ffffff" } },
+            }
+          : null,
+    },
+    renderService: new EffectRenderService(),
+    distributionService: {
+      // Every call carries a small, consistent extra delay - real TCP write
+      // latency, not a stall - well under `targetQueueMs`, so this never
+      // trips the large-deficit catch-up path; it's purely testing whether
+      // ordinary per-tick overhead accumulates.
+      distributeCanvasFrames: async ({ frames }) => {
+        callTimes.push(Date.now());
+        await new Promise((resolve) => setTimeout(resolve, 8));
+        return {
+          status: "sent",
+          frameCount: frames.length,
+          sent: [],
+          failed: [],
+        };
+      },
+    },
+    idFactory: () => "session-1",
+    frameRate: 50, // 20ms/frame
+    targetQueueMs: 100,
+  });
+
+  try {
+    const session = await service.start({
+      canvasId: "canvas-1",
+      effectId: "solid",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // The old scheduler rescheduled `intervalMs` after each tick's own work
+    // finished, so this steady ~8-10ms/tick of real overhead accumulated in
+    // full, call after call (measured: ~9.8ms/call of pure drift, close to
+    // the full delay, on the pre-fix code in this exact scenario). The fix
+    // doesn't make Node's own timer scheduling perfectly exact - some
+    // residual jitter is normal - but it should absorb most of that steady
+    // overhead as slack within each 20ms interval rather than carrying all
+    // of it forward every single tick. Threshold set well below the old
+    // behavior's ~10ms/call but above pure timer noise.
+    const first = callTimes[0];
+    const last = callTimes[callTimes.length - 1];
+    const expectedSpan = (callTimes.length - 1) * 20;
+    const actualSpan = last - first;
+    assert.ok(
+      actualSpan < expectedSpan + (callTimes.length - 1) * 7,
+      `expected well under ${(callTimes.length - 1) * 8}ms of accumulated drift (the old code's full per-tick overhead), got ${actualSpan - expectedSpan}ms over ${callTimes.length} calls`,
+    );
+    service.stop(session.id);
+  } finally {
+    for (const session of service.list()) service.stop(session.id);
+  }
+});
+
+test("a large catch-up deficit skips ahead to now instead of bursting every missed frame", async () => {
+  const batches = [];
+  let slowedOnce = false;
+  const service = new PlaybackService({
+    canvasService: {
+      get: (id) =>
+        id === "canvas-1"
+          ? {
+              id,
+              width: 1,
+              height: 1,
+              mappings: [{ controllerId: "deck-1", stripIndex: 0 }],
+            }
+          : null,
+    },
+    effectService: {
+      get: (id) =>
+        id === "solid"
+          ? {
+              id,
+              renderer: "solid",
+              parameters: { color: { default: "#ffffff" } },
+            }
+          : null,
+    },
+    renderService: new EffectRenderService(),
+    distributionService: {
+      distributeCanvasFrames: async ({ frames }) => {
+        batches.push(frames.length);
+        // A long stall (e.g. a wedged TCP write) on the second call - by the
+        // time it resolves, the target queue is now hundreds of ms behind
+        // session.lastFrameAt at this fast a frame rate.
+        if (!slowedOnce && batches.length === 2) {
+          slowedOnce = true;
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        return {
+          status: "sent",
+          frameCount: frames.length,
+          sent: [],
+          failed: [],
+        };
+      },
+    },
+    idFactory: () => "session-1",
+    frameRate: 100, // 10ms/frame - 300ms of stall is a ~30-frame deficit
+    targetQueueMs: 10,
+    maxCatchUpFrames: 4,
+  });
+
+  try {
+    const session = await service.start({
+      canvasId: "canvas-1",
+      effectId: "solid",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    // Sending every one of the ~30 missed frames would be mostly wasted
+    // work - NightDriverStrip's firmware discards all but the newest
+    // already-due frame it finds buffered when it wakes up to draw, so a
+    // big burst is bandwidth spent on frames nobody will ever see, and each
+    // extra write is one more chance to hit another stall. Every batch
+    // should stay within the configured cap.
+    assert.ok(batches.every((size) => size <= 4), `batches: ${batches.join(",")}`);
+    service.stop(session.id);
+  } finally {
+    for (const session of service.list()) service.stop(session.id);
+  }
+});

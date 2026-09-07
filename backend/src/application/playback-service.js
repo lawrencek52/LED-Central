@@ -15,6 +15,7 @@ export class PlaybackService {
     targetQueueMs = 1500,
     audioService = null,
     audioQueueFrames = 2,
+    maxCatchUpFrames = 4,
   }) {
     this.canvasService = canvasService;
     this.effectService = effectService;
@@ -28,6 +29,7 @@ export class PlaybackService {
     this.targetQueueMs = targetQueueMs;
     this.audioService = audioService;
     this.audioQueueFrames = audioQueueFrames;
+    this.maxCatchUpFrames = maxCatchUpFrames;
     this.sessions = new Map();
     this.timers = new Map();
     this.activeByCanvas = new Map();
@@ -244,6 +246,25 @@ export class PlaybackService {
   }
 
   scheduleFrames({ session, canvas, effect }) {
+    // Ticks are scheduled against a fixed wall-clock cadence (`nextTickAt`,
+    // advanced by exactly one interval per tick) rather than "intervalMs
+    // after this tick's work finishes". The latter looks equivalent when
+    // rendering+distributing is instant, but distribution occasionally
+    // stalls for real (a slow TCP write to a controller - measured live at
+    // 100ms-1.6s on ~1.5-2% of writes even after parallelizing per-channel
+    // writes, since one tick still awaits every channel via Promise.all). A
+    // stall would otherwise push every subsequent tick later by that same
+    // amount, compounding tick after tick instead of being a one-off blip -
+    // and each catch-up response (below) sends a larger burst of frames,
+    // which itself takes longer to distribute, is more likely to contain
+    // another stalled write, and pushes the schedule later still. The
+    // firmware discards all but the newest already-due frame it finds
+    // buffered when it wakes up to draw (see NightDriverStrip's WiFiDraw()),
+    // so a compounding delay doesn't just play late - whole bursts of
+    // frames get silently dropped, which reads as broken/stuttering
+    // playback and gets worse the tighter the frame budget is (a short
+    // audio-effect queue, or simply a higher requested fps).
+    let nextTickAt = this.now() + this.frameIntervalMs(session.frameRate);
     const tick = async () => {
       if (session.status !== "playing") return;
       if (this.requiresAudio(effect)) {
@@ -256,16 +277,29 @@ export class PlaybackService {
         // at a time instead of waiting and sending a large burst, so delivery stays
         // paced close to the real playback frame rate.
         const targetLastFrameAt = this.now() + session.targetQueueMs;
-        const framesNeeded = Math.round(
+        let framesNeeded = Math.round(
           (targetLastFrameAt - session.lastFrameAt) / intervalMs,
         );
+        let firstFrameAt = session.lastFrameAt + intervalMs;
+        if (framesNeeded > this.maxCatchUpFrames) {
+          // Badly behind (one long stall, or several smaller ones that never
+          // got a chance to recover) - sending every frame in between
+          // wouldn't help: NightDriverStrip's WiFiDraw() discards all but the
+          // newest already-due frame it finds buffered when it wakes up to
+          // draw, so replaying the gap is mostly wasted TCP writes, and each
+          // extra write is one more chance to hit another stall and fall
+          // further behind. Skip straight to now and resume normal
+          // single-frame pacing from there instead.
+          framesNeeded = 1;
+          firstFrameAt = targetLastFrameAt;
+        }
         if (framesNeeded > 0) {
           const frames = this.renderFrames({
             effect,
             canvas,
             parameters: session.parameters,
             startedAt: Date.parse(session.startedAt),
-            firstFrameAt: session.lastFrameAt + intervalMs,
+            firstFrameAt,
             count: framesNeeded,
             frameRate: session.frameRate,
           });
@@ -287,11 +321,16 @@ export class PlaybackService {
         });
         return;
       }
-      this.timers.set(session.id, setTimeout(tick, intervalMs));
+      nextTickAt += intervalMs;
+      const now = this.now();
+      // Fallen behind by more than a full queue depth (e.g. after one very
+      // long stall) - resync to "now" instead of firing a rapid burst of
+      // overdue ticks trying to reclaim wall-clock time we can't get back.
+      // The framesNeeded catch-up above already covers getting the queued
+      // *content* back on schedule.
+      if (now - nextTickAt > session.targetQueueMs) nextTickAt = now + intervalMs;
+      this.timers.set(session.id, setTimeout(tick, Math.max(0, nextTickAt - now)));
     };
-    this.timers.set(
-      session.id,
-      setTimeout(tick, this.frameIntervalMs(session.frameRate)),
-    );
+    this.timers.set(session.id, setTimeout(tick, nextTickAt - this.now()));
   }
 }
