@@ -1418,7 +1418,17 @@ const renderers = {
               const coolAmount = Math.floor(rng() * cooling);
               h[i] = Math.max(0, h[i] - coolAmount);
             }
-            for (let i = 0; i < width; i += 1) {
+            // Iterate high-to-low (unlike `fire`'s low-to-high) since this
+            // diffusion reads *lower*-index neighbors (i-1, i-2) - going
+            // high-to-low means those neighbors haven't been overwritten yet
+            // this step, same as `fire` reading not-yet-touched higher
+            // neighbors in its low-to-high loop. Iterating low-to-high here
+            // instead (forward loop, backward reads) would read *freshly
+            // updated* neighbors at nearly every cell, cascading heat clear
+            // across the row within a single 20ms step - saturating to
+            // near-255 everywhere and rendering solid white instead of a
+            // graded flame.
+            for (let i = width - 1; i >= 0; i -= 1) {
               const a = h[(i - 1 + width) % width];
               const b = h[(i - 2 + width) % width];
               h[i] = Math.min(255, Math.floor((a + b * 2) / 3));

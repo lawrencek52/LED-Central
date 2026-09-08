@@ -714,6 +714,39 @@ test("spectrum-band lights a fire-driven level bar plus a separate peak-hold mar
   );
 });
 
+test("spectrum-band's level bar is a graded flame, not solid white", () => {
+  // Regression test: the diffusion step's neighbor reads (h[i-1], h[i-2])
+  // must run in a high-to-low loop, not low-to-high - a low-to-high loop
+  // would read each cell's *already-updated* neighbors from earlier in the
+  // very same step, cascading heat across the whole row within one 20ms
+  // simulation tick. That saturates nearly every cell near 255, which
+  // heatToFireColor renders as solid white instead of a red/orange/yellow
+  // gradient - exactly what was reported as "all of the bars are white".
+  const service = new EffectRenderService();
+  const width = 60;
+  const canvas = { width, height: 1 };
+  const frame = service.render({
+    effect: { renderer: "spectrum-band", parameters: {} },
+    canvas,
+    parameters: {
+      timeSeconds: 5,
+      audio: { bandCount: 1, peaks: [0.9], peaksDecayed: [0.9] },
+      stripCount: 1,
+      mappingOrdinal: 0,
+    },
+    timestamp: 5000,
+  });
+  const litPixels = frame.pixels.filter((pixel) => pixel.some(Boolean));
+  assert.ok(litPixels.length > 10, "expected a wide lit level bar to sample");
+  const whiteCount = litPixels.filter(
+    (pixel) => pixel[0] === 255 && pixel[1] === 255,
+  ).length;
+  assert.ok(
+    whiteCount < litPixels.length / 2,
+    `expected a graded flame, but ${whiteCount}/${litPixels.length} lit pixels were white`,
+  );
+});
+
 test("spectrum-band's fire stays visible near a quiet level's own tip on a long strip, not frozen black", () => {
   // Regression test: on a 215+ LED strip, a quiet/floor-level reading gives a
   // small litCount (here, silence with no telemetry - peaks/peaksDecayed
