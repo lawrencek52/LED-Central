@@ -637,6 +637,36 @@ test("fire blends neighboring rows together when neighborBlend is enabled", () =
   assert.deepEqual(row0, row2);
 });
 
+test("fire supersamples a narrow canvas so more than a couple of cells light up, not just the spark end", () => {
+  const width = 16;
+  const service = new EffectRenderService();
+  const frame = service.render({
+    effect: { renderer: "fire", parameters: fireParameters() },
+    canvas: { width, height: 1 },
+    parameters: { timeSeconds: 5 },
+  });
+  const litCells = frame.pixels.filter(
+    (pixel) => pixel[0] + pixel[1] + pixel[2] > 0,
+  ).length;
+  // Below the fix, the automaton (tuned for 100+ cells) cools to black within
+  // a few cells of the spark end on a 16-wide strip, leaving most of it dark.
+  assert.ok(
+    litCells >= width / 2,
+    `expected at least half of ${width} cells lit, got ${litCells}`,
+  );
+});
+
+test("fire's supersampled output still matches the real canvas width", () => {
+  const width = 16;
+  const service = new EffectRenderService();
+  const frame = service.render({
+    effect: { renderer: "fire", parameters: fireParameters() },
+    canvas: { width, height: 2 },
+    parameters: { timeSeconds: 5 },
+  });
+  assert.equal(frame.pixels.length, width * 2);
+});
+
 test("fire rows are independent (not just duplicated) when neighborBlend is off", () => {
   const width = 30;
   const service = new EffectRenderService();

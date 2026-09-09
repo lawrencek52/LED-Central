@@ -629,7 +629,7 @@ const renderers = {
     const color = kelvinToRgb(kelvin);
     return Array.from({ length: width * height }, () => color);
   },
-  fire: ({ width, height, parameters, timestamp }) => {
+  fire: ({ width: canvasWidth, height, parameters, timestamp }) => {
     // Ported from NightDriverStrip's FireEffect::DrawFire() (fireeffect.h):
     // per-cell cooling, then heat diffused in from higher-index neighbors
     // (BlendNeighbor1=1, BlendNeighbor2=2, over BlendTotal=3), then random
@@ -656,6 +656,12 @@ const renderers = {
     const reversed = Boolean(parameters.reversed);
     const mirrored = Boolean(parameters.mirrored);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    // Simulate at a wider virtual width on a too-narrow canvas (see
+    // FIRE_SUPERSAMPLE_MIN_WIDTH above), downsampling back down at the end.
+    const width =
+      canvasWidth < FIRE_SUPERSAMPLE_MIN_WIDTH
+        ? FIRE_SUPERSAMPLE_WIDTH
+        : canvasWidth;
     const ledCount = mirrored ? Math.max(1, Math.floor(width / 2)) : width;
     const randomSeed = Number(parameters.randomSeed ?? 0);
     const seedSalt = 11 + randomSeed;
@@ -735,7 +741,9 @@ const renderers = {
         }
       }
     }
-    return pixels;
+    return width === canvasWidth
+      ? pixels
+      : downsampleRowWidth(pixels, width, canvasWidth, height);
   },
   "classic-fire": ({ width, height, parameters, timestamp }) => {
     // Ported from NightDriverStrip's ClassicFireEffect::Fire() (fireeffect.h):
@@ -1632,6 +1640,44 @@ const FIRE_PALETTE = [
   [255, 180, 20],
   [255, 255, 200],
 ];
+
+// `fire`'s cooling/sparking/diffusion constants are tuned for a strip with
+// well over a hundred cells; on a canvas narrower than this, the automaton
+// barely gets going before it hits the far end, reading as a lit sliver at
+// the spark end rather than a graded flame. Below the threshold, the whole
+// simulation runs at FIRE_SUPERSAMPLE_WIDTH instead (same trick as
+// downsampling any oversampled signal) and the result is box-downsampled
+// back down to the canvas's real width.
+const FIRE_SUPERSAMPLE_MIN_WIDTH = 64;
+const FIRE_SUPERSAMPLE_WIDTH = 256;
+
+// Box-filters each row from sourceWidth cells down to targetWidth, averaging
+// per channel so a bright one-cell spark contributes its share to the output
+// cell it lands in rather than being skipped (as nearest-neighbor sampling
+// would risk for a source much wider than the target).
+function downsampleRowWidth(pixels, sourceWidth, targetWidth, height) {
+  const result = new Array(targetWidth * height);
+  for (let row = 0; row < height; row += 1) {
+    for (let x = 0; x < targetWidth; x += 1) {
+      const start = Math.floor((x / targetWidth) * sourceWidth);
+      const end = Math.max(start + 1, Math.floor(((x + 1) / targetWidth) * sourceWidth));
+      let r = 0, g = 0, b = 0;
+      for (let sourceX = start; sourceX < end; sourceX += 1) {
+        const color = pixels[row * sourceWidth + sourceX];
+        r += color[0];
+        g += color[1];
+        b += color[2];
+      }
+      const count = end - start;
+      result[row * targetWidth + x] = [
+        Math.round(r / count),
+        Math.round(g / count),
+        Math.round(b / count),
+      ];
+    }
+  }
+  return result;
+}
 
 const TWINKLE_COLORS = [
   [255, 255, 255],
