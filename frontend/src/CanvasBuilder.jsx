@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "./api/client";
 
+const ORIGIN_CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"];
+
 const blankCanvas = {
   name: "New canvas",
   width: 215,
   height: 1,
   mode: "series",
   stripSpacingRatio: 1,
+  originCorner: "top-left",
+  axis: "horizontal",
   mappings: [],
 };
 
@@ -21,9 +25,13 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
     if (canvas)
       setDraft({
         ...canvas,
-        mode: canvas.mappings.some((mapping) => mapping.y > 0)
-          ? "parallel"
-          : "series",
+        mode: canvas.mappings.some((mapping) => mapping.layout === "serpentine")
+          ? "matrix"
+          : canvas.mappings.some((mapping) => mapping.y > 0)
+            ? "parallel"
+            : "series",
+        originCorner: canvas.mappings[0]?.originCorner || "top-left",
+        axis: canvas.mappings[0]?.axis || "horizontal",
       });
   }, [canvases, selectedId]);
 
@@ -33,6 +41,10 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
   }
 
   function addStrip() {
+    if (draft.mode === "matrix" && draft.mappings.length >= 1) {
+      onError("A matrix canvas wires a single strip. Remove the existing strip first.");
+      return;
+    }
     const used = new Set(
       canvases
         .filter((canvas) => canvas.id !== selectedId)
@@ -62,6 +74,25 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
     }
     const { controller, stripIndex } = available;
     const ledCount = controller.ledCounts?.[stripIndex] || 215;
+
+    if (draft.mode === "matrix") {
+      const width = Number(draft.width) || 16;
+      const height = Number(draft.height) || 16;
+      const mapping = {
+        controllerId: controller.id,
+        stripIndex,
+        layout: "serpentine",
+        x: 0,
+        y: 0,
+        width,
+        height,
+        originCorner: draft.originCorner || "top-left",
+        axis: draft.axis || "horizontal",
+      };
+      setDraft({ ...draft, mappings: [mapping], width, height });
+      return;
+    }
+
     const mapping = {
       controllerId: controller.id,
       stripIndex,
@@ -110,6 +141,17 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
         throw new Error("Canvas height must be a positive integer.");
       if (!(Number(draft.stripSpacingRatio) > 0))
         throw new Error("Strip spacing ratio must be a positive number.");
+      if (draft.mode === "matrix") {
+        const mapping = draft.mappings[0];
+        const controller = controllers.find(
+          (item) => item.id === mapping?.controllerId,
+        );
+        const ledCount = controller?.ledCounts?.[mapping?.stripIndex];
+        if (mapping && ledCount && ledCount !== mapping.width * mapping.height)
+          throw new Error(
+            `Matrix is ${mapping.width} x ${mapping.height} = ${mapping.width * mapping.height} LEDs, but the selected strip has ${ledCount} LEDs.`,
+          );
+      }
       const mappings = draft.mappings.map((mapping) => ({
         ...mapping,
         x: Number(mapping.x || 0),
@@ -236,6 +278,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
             >
               <option value="series">Series / one row</option>
               <option value="parallel">Parallel / rows</option>
+              <option value="matrix">Matrix / single strip, serpentine</option>
             </select>
           </label>
           {selectedId !== "new" && (
@@ -261,29 +304,94 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
               />
             </label>
             <label>
-              Width
+              {draft.mode === "matrix" ? "Matrix width" : "Width"}
               <input
                 type="number"
                 min="1"
                 max="10000"
                 value={draft.width}
-                onChange={(event) =>
-                  setDraft({ ...draft, width: Number(event.target.value) })
-                }
+                onChange={(event) => {
+                  const width = Number(event.target.value);
+                  setDraft({
+                    ...draft,
+                    width,
+                    mappings:
+                      draft.mode === "matrix"
+                        ? draft.mappings.map((mapping) => ({ ...mapping, width }))
+                        : draft.mappings,
+                  });
+                }}
               />
             </label>
             <label>
-              Height
+              {draft.mode === "matrix" ? "Matrix height" : "Height"}
               <input
                 type="number"
                 min="1"
                 max="10000"
                 value={draft.height}
-                onChange={(event) =>
-                  setDraft({ ...draft, height: Number(event.target.value) })
-                }
+                onChange={(event) => {
+                  const height = Number(event.target.value);
+                  setDraft({
+                    ...draft,
+                    height,
+                    mappings:
+                      draft.mode === "matrix"
+                        ? draft.mappings.map((mapping) => ({ ...mapping, height }))
+                        : draft.mappings,
+                  });
+                }}
               />
             </label>
+            {draft.mode === "matrix" && (
+              <>
+                <label>
+                  Origin corner
+                  <select
+                    value={draft.originCorner || "top-left"}
+                    onChange={(event) => {
+                      const originCorner = event.target.value;
+                      setDraft({
+                        ...draft,
+                        originCorner,
+                        mappings: draft.mappings.map((mapping) => ({
+                          ...mapping,
+                          originCorner,
+                        })),
+                      });
+                    }}
+                    title="Which corner of the matrix physical LED #0 is wired to."
+                  >
+                    {ORIGIN_CORNERS.map((corner) => (
+                      <option key={corner} value={corner}>
+                        {corner.replace("-", " ")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  First run direction
+                  <select
+                    value={draft.axis || "horizontal"}
+                    onChange={(event) => {
+                      const axis = event.target.value;
+                      setDraft({
+                        ...draft,
+                        axis,
+                        mappings: draft.mappings.map((mapping) => ({
+                          ...mapping,
+                          axis,
+                        })),
+                      });
+                    }}
+                    title="Direction the strip runs before each serpentine turn."
+                  >
+                    <option value="horizontal">Horizontal</option>
+                    <option value="vertical">Vertical</option>
+                  </select>
+                </label>
+              </>
+            )}
             {draft.mode === "parallel" && (
               <label>
                 Strip spacing ratio
@@ -306,9 +414,12 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
               className="secondary-button"
               type="button"
               onClick={addStrip}
-              disabled={controllers.length === 0}
+              disabled={
+                controllers.length === 0 ||
+                (draft.mode === "matrix" && draft.mappings.length >= 1)
+              }
             >
-              Add strip
+              {draft.mode === "matrix" ? "Assign matrix strip" : "Add strip"}
             </button>
           </div>
           <div className="canvas-preview-panel">
@@ -318,7 +429,9 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                 <h3>
                   {draft.mode === "series"
                     ? "Continuous strip run"
-                    : "Offset parallel rows"}
+                    : draft.mode === "matrix"
+                      ? "Serpentine matrix"
+                      : "Offset parallel rows"}
                 </h3>
               </div>
               <span>
@@ -355,7 +468,11 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                       {controller?.name || mapping.controllerId} / strip{" "}
                       {mapping.stripIndex + 1}
                     </span>
-                    <b>{mapping.width} LEDs</b>
+                    <b>
+                      {mapping.layout === "serpentine"
+                        ? `${mapping.width}x${mapping.height} (${mapping.width * mapping.height} LEDs)`
+                        : `${mapping.width} LEDs`}
+                    </b>
                   </div>
                 );
               })}
@@ -408,9 +525,12 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                     onChange={(event) =>
                       updateMapping(index, {
                         stripIndex: Number(event.target.value),
-                        width:
-                          controller?.ledCounts?.[Number(event.target.value)] ||
-                          215,
+                        ...(mapping.layout !== "serpentine" && {
+                          width:
+                            controller?.ledCounts?.[
+                              Number(event.target.value)
+                            ] || 215,
+                        }),
                       })
                     }
                   >
@@ -435,20 +555,38 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                       },
                     )}
                   </select>
-                  <label>
-                    LEDs
-                    <input
-                      type="number"
-                      min="1"
-                      max="4200"
-                      value={mapping.width}
-                      onChange={(event) =>
-                        updateMapping(index, {
-                          width: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
+                  {mapping.layout === "serpentine" ? (
+                    <label>
+                      Matrix LEDs
+                      <input
+                        type="text"
+                        readOnly
+                        value={`${mapping.width} x ${mapping.height} = ${mapping.width * mapping.height}${
+                          controller?.ledCounts?.[mapping.stripIndex] &&
+                          controller.ledCounts[mapping.stripIndex] !==
+                            mapping.width * mapping.height
+                            ? ` (strip has ${controller.ledCounts[mapping.stripIndex]})`
+                            : ""
+                        }`}
+                        title="Set via the Matrix width/height fields above."
+                      />
+                    </label>
+                  ) : (
+                    <label>
+                      LEDs
+                      <input
+                        type="number"
+                        min="1"
+                        max="4200"
+                        value={mapping.width}
+                        onChange={(event) =>
+                          updateMapping(index, {
+                            width: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                  )}
                   {draft.mode === "parallel" && (
                     <label>
                       Offset
@@ -463,20 +601,22 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                       />
                     </label>
                   )}
-                  <label>
-                    Direction
-                    <select
-                      value={mapping.reversed ? "rtl" : "ltr"}
-                      onChange={(event) =>
-                        updateMapping(index, {
-                          reversed: event.target.value === "rtl",
-                        })
-                      }
-                    >
-                      <option value="ltr">Left to right</option>
-                      <option value="rtl">Right to left</option>
-                    </select>
-                  </label>
+                  {mapping.layout !== "serpentine" && (
+                    <label>
+                      Direction
+                      <select
+                        value={mapping.reversed ? "rtl" : "ltr"}
+                        onChange={(event) =>
+                          updateMapping(index, {
+                            reversed: event.target.value === "rtl",
+                          })
+                        }
+                      >
+                        <option value="ltr">Left to right</option>
+                        <option value="rtl">Right to left</option>
+                      </select>
+                    </label>
+                  )}
                   <button
                     className="icon-action danger"
                     type="button"

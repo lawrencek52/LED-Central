@@ -49,3 +49,48 @@ test('reverses every other row for a serpentine layout', () => {
     ['a'], ['b'], ['c'], ['f'], ['e'], ['d']
   ]);
 });
+
+test('wires a serpentine matrix from any origin corner and axis, even with an odd run count', () => {
+  // 3 columns x 3 rows (an odd number of runs either way) - a size that
+  // previously collapsed distinct corners together when corners were
+  // expressed as rotation + a single whole-list reverse.
+  const grid = [
+    ['a'], ['b'], ['c'],
+    ['d'], ['e'], ['f'],
+    ['g'], ['h'], ['i']
+  ];
+
+  function wire(originCorner, axis) {
+    const mapped = mapCanvasFrame({
+      width: 3, height: 3,
+      mappings: [{ controllerId: 'deck1', stripIndex: 0, layout: 'serpentine', width: 3, height: 3, originCorner, axis }]
+    }, frameFor(grid));
+    return mapped.get('deck1')[0].pixels;
+  }
+
+  assert.deepEqual(wire('top-left', 'horizontal'), [
+    ['a'], ['b'], ['c'], ['f'], ['e'], ['d'], ['g'], ['h'], ['i']
+  ]);
+  assert.deepEqual(wire('top-right', 'horizontal'), [
+    ['c'], ['b'], ['a'], ['d'], ['e'], ['f'], ['i'], ['h'], ['g']
+  ]);
+  assert.deepEqual(wire('bottom-left', 'horizontal'), [
+    ['g'], ['h'], ['i'], ['f'], ['e'], ['d'], ['a'], ['b'], ['c']
+  ]);
+  assert.deepEqual(wire('bottom-right', 'horizontal'), [
+    ['i'], ['h'], ['g'], ['d'], ['e'], ['f'], ['c'], ['b'], ['a']
+  ]);
+  assert.deepEqual(wire('top-left', 'vertical'), [
+    ['a'], ['d'], ['g'], ['h'], ['e'], ['b'], ['c'], ['f'], ['i']
+  ]);
+
+  // All four corners must be distinct for an odd-sized matrix - this is the
+  // bug a rotation+reversed-only model could not express.
+  const variants = [
+    wire('top-left', 'horizontal'),
+    wire('top-right', 'horizontal'),
+    wire('bottom-left', 'horizontal'),
+    wire('bottom-right', 'horizontal')
+  ].map((pixels) => JSON.stringify(pixels));
+  assert.equal(new Set(variants).size, 4);
+});

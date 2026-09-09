@@ -34,7 +34,13 @@ function validateCanvasPayload(body, { partial = false } = {}) {
             mapping.stripIndex < 0 ||
             !["series", "parallel", "serpentine"].includes(
               mapping.layout || "series",
-            ),
+            ) ||
+            (mapping.originCorner !== undefined &&
+              !["top-left", "top-right", "bottom-left", "bottom-right"].includes(
+                mapping.originCorner,
+              )) ||
+            (mapping.axis !== undefined &&
+              !["horizontal", "vertical"].includes(mapping.axis)),
         ))
     )
       errors.mappings = "must contain valid strip mappings";
