@@ -33,11 +33,11 @@ function validateControllerPayload(body, { partial = false } = {}) {
         payload.ledCounts.length < 1 ||
         payload.ledCounts.length > 16 ||
         payload.ledCounts.some(
-          (count) => !Number.isInteger(count) || count < 1 || count > 4200,
+          (count) => !Number.isInteger(count) || count < 1 || count > 65536,
         )
       ) {
         errors.ledCounts =
-          "must contain 1 to 16 integer counts between 1 and 4200";
+          "must contain 1 to 16 integer counts between 1 and 65536";
       }
     } else if (
       typeof payload[field] !== "string" ||

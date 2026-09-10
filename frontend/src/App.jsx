@@ -459,7 +459,7 @@ function App() {
                       required
                       type="number"
                       min="1"
-                      max="4200"
+                      max="65536"
                       value={count}
                       onChange={(event) => {
                         const ledCounts = [...form.ledCounts];

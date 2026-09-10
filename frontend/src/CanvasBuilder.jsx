@@ -9,6 +9,7 @@ const blankCanvas = {
   height: 1,
   mode: "series",
   stripSpacingRatio: 1,
+  wiring: "serpentine",
   originCorner: "top-left",
   axis: "horizontal",
   mappings: [],
@@ -22,17 +23,29 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
   useEffect(() => {
     if (selectedId === "new") return;
     const canvas = canvases.find((item) => item.id === selectedId);
-    if (canvas)
+    if (canvas) {
+      // A "matrix" canvas is a single mapping spanning more than one row -
+      // either a single addressable strip snaked into a grid
+      // (layout 'serpentine') or a HUB75-style panel whose driver already
+      // handles the physical scan order in firmware (layout 'series', but
+      // with height > 1 unlike a plain single-row series canvas).
+      const isMatrix =
+        canvas.mappings.length === 1 && canvas.mappings[0].height > 1;
       setDraft({
         ...canvas,
-        mode: canvas.mappings.some((mapping) => mapping.layout === "serpentine")
+        mode: isMatrix
           ? "matrix"
           : canvas.mappings.some((mapping) => mapping.y > 0)
             ? "parallel"
             : "series",
+        wiring:
+          canvas.mappings[0]?.layout === "serpentine"
+            ? "serpentine"
+            : "row-major",
         originCorner: canvas.mappings[0]?.originCorner || "top-left",
         axis: canvas.mappings[0]?.axis || "horizontal",
       });
+    }
   }, [canvases, selectedId]);
 
   function selectCanvas(id) {
@@ -78,16 +91,19 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
     if (draft.mode === "matrix") {
       const width = Number(draft.width) || 16;
       const height = Number(draft.height) || 16;
+      const wiring = draft.wiring || "serpentine";
       const mapping = {
         controllerId: controller.id,
         stripIndex,
-        layout: "serpentine",
+        layout: wiring === "row-major" ? "series" : "serpentine",
         x: 0,
         y: 0,
         width,
         height,
-        originCorner: draft.originCorner || "top-left",
-        axis: draft.axis || "horizontal",
+        ...(wiring === "serpentine" && {
+          originCorner: draft.originCorner || "top-left",
+          axis: draft.axis || "horizontal",
+        }),
       };
       setDraft({ ...draft, mappings: [mapping], width, height });
       return;
@@ -278,7 +294,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
             >
               <option value="series">Series / one row</option>
               <option value="parallel">Parallel / rows</option>
-              <option value="matrix">Matrix / single strip, serpentine</option>
+              <option value="matrix">Matrix / single strip or panel</option>
             </select>
           </label>
           {selectedId !== "new" && (
@@ -344,6 +360,38 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
               />
             </label>
             {draft.mode === "matrix" && (
+              <>
+                <label>
+                  Wiring
+                  <select
+                    value={draft.wiring || "serpentine"}
+                    onChange={(event) => {
+                      const wiring = event.target.value;
+                      setDraft({
+                        ...draft,
+                        wiring,
+                        mappings: draft.mappings.map((mapping) => {
+                          const { originCorner, axis, ...rest } = mapping;
+                          return {
+                            ...rest,
+                            layout: wiring === "row-major" ? "series" : "serpentine",
+                            ...(wiring === "serpentine" && {
+                              originCorner: draft.originCorner || "top-left",
+                              axis: draft.axis || "horizontal",
+                            }),
+                          };
+                        }),
+                      });
+                    }}
+                    title="Serpentine: a single addressable strip (e.g. WS2812) snaked into a grid. Row-major: a matrix panel driver (e.g. HUB75) that already handles the physical scan order in firmware."
+                  >
+                    <option value="serpentine">Serpentine (single addressable strip)</option>
+                    <option value="row-major">Row-major (matrix panel driver, e.g. HUB75)</option>
+                  </select>
+                </label>
+              </>
+            )}
+            {draft.mode === "matrix" && draft.wiring !== "row-major" && (
               <>
                 <label>
                   Origin corner
@@ -430,7 +478,9 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                   {draft.mode === "series"
                     ? "Continuous strip run"
                     : draft.mode === "matrix"
-                      ? "Serpentine matrix"
+                      ? draft.wiring === "row-major"
+                        ? "Row-major matrix (panel driver)"
+                        : "Serpentine matrix"
                       : "Offset parallel rows"}
                 </h3>
               </div>
@@ -469,7 +519,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                       {mapping.stripIndex + 1}
                     </span>
                     <b>
-                      {mapping.layout === "serpentine"
+                      {draft.mode === "matrix"
                         ? `${mapping.width}x${mapping.height} (${mapping.width * mapping.height} LEDs)`
                         : `${mapping.width} LEDs`}
                     </b>
@@ -525,7 +575,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                     onChange={(event) =>
                       updateMapping(index, {
                         stripIndex: Number(event.target.value),
-                        ...(mapping.layout !== "serpentine" && {
+                        ...(draft.mode !== "matrix" && {
                           width:
                             controller?.ledCounts?.[
                               Number(event.target.value)
@@ -555,7 +605,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                       },
                     )}
                   </select>
-                  {mapping.layout === "serpentine" ? (
+                  {draft.mode === "matrix" ? (
                     <label>
                       Matrix LEDs
                       <input
@@ -601,7 +651,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                       />
                     </label>
                   )}
-                  {mapping.layout !== "serpentine" && (
+                  {draft.mode !== "matrix" && (
                     <label>
                       Direction
                       <select
