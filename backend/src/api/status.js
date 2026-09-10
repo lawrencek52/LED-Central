@@ -36,6 +36,11 @@ export function createStatusRouter({
               : "Unknown controller",
             stripIndex: mapping.stripIndex,
             reversed: Boolean(mapping.reversed),
+            // Position within the canvas, so the frontend can composite every
+            // strip's own preview frame into one canvas-shaped image instead
+            // of showing N separate per-strip previews.
+            x: mapping.x || 0,
+            y: mapping.y || 0,
             framesPerSecond: preview.recvFps ?? queue.framesPerSecond,
             recvFps: preview.recvFps ?? 0,
             drawFps: preview.drawFps ?? 0,
@@ -61,6 +66,8 @@ export function createStatusRouter({
         return {
           canvasId: canvas.id,
           canvasName: canvas.name,
+          width: canvas.width,
+          height: canvas.height,
           effectName: session
             ? (playbackService.effectService.get(session.effectId)?.name ??
               session.effectId)

@@ -1271,28 +1271,27 @@ h3 {
   color: var(--yellow);
 }
 .preview-toggle {
-  grid-column: 1 / -1;
-  justify-self: start;
+  margin: 16px 20px 0;
   padding: 6px 12px;
   font-size: 10px;
 }
 .status-preview {
-  grid-column: 1 / -1;
   display: block;
-  width: 100%;
+  width: calc(100% - 40px);
   height: auto;
-  max-height: 220px;
+  max-height: 320px;
+  margin: 12px 20px 20px;
   image-rendering: pixelated;
   object-fit: contain;
   border: 1px solid rgba(74, 222, 255, 0.25);
   background: #02040d;
 }
 .status-preview-empty {
-  grid-column: 1 / -1;
   display: grid;
   place-items: center;
-  width: 100%;
+  width: calc(100% - 40px);
   min-height: 40px;
+  margin: 12px 20px 20px;
   color: var(--muted);
   font-size: 8px;
   text-align: center;
