@@ -315,6 +315,42 @@ export class TcpControllerGateway {
     socket.on("error", () => {});
   }
 
+  // Reads a device's actual topology from its own /statistics/static so the
+  // "add controller" form can be prefilled instead of asking the user to
+  // guess strip count/LED count - especially important for HUB75 boards,
+  // where "LEDs per strip" doesn't map to anything the firmware has (the
+  // whole matrix is one channel; see ACTIVE_OUTPUT_DRIVER === "hub75").
+  async detectCapabilities(host) {
+    const response = await fetch(
+      `http://${host}:${this.webPort}/statistics/static`,
+      { signal: AbortSignal.timeout(this.connectionTimeoutMs) },
+    );
+    if (!response.ok)
+      throw new Error(`Device responded with HTTP ${response.status}`);
+
+    const stats = await response.json();
+    const ledCounts =
+      Array.isArray(stats.ACTIVE_STRIP_LENGTHS) &&
+      stats.ACTIVE_STRIP_LENGTHS.length > 0
+        ? stats.ACTIVE_STRIP_LENGTHS.map(Number)
+        : [Number(stats.ACTIVE_NUM_LEDS) || 0];
+
+    return {
+      driver: stats.ACTIVE_OUTPUT_DRIVER ?? null,
+      layout: stats.ACTIVE_LAYOUT ?? null,
+      numChannels: Number(stats.ACTIVE_NUM_CHANNELS) || ledCounts.length,
+      ledCounts,
+      matrixWidth:
+        stats.ACTIVE_MATRIX_WIDTH != null
+          ? Number(stats.ACTIVE_MATRIX_WIDTH)
+          : null,
+      matrixHeight:
+        stats.ACTIVE_MATRIX_HEIGHT != null
+          ? Number(stats.ACTIVE_MATRIX_HEIGHT)
+          : null,
+    };
+  }
+
   probeAudioSupport(controller) {
     return fetch(`http://${controller.host}:${this.webPort}/statistics/static`)
       .then((response) => (response.ok ? response.json() : null))

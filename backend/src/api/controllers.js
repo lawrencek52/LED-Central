@@ -116,6 +116,23 @@ export function createControllerRouter({ controllerService, gateway }) {
     res.status(201).json(controller);
   });
 
+  // Registered before /:id so "detect" isn't swallowed as an id param.
+  router.post("/detect", async (req, res, next) => {
+    const host = typeof req.body?.host === "string" ? req.body.host.trim() : "";
+    if (!host) {
+      const error = new Error("host is required");
+      error.statusCode = 400;
+      return next(error);
+    }
+    try {
+      const capabilities = await gateway.detectCapabilities(host);
+      return res.json(capabilities);
+    } catch (error) {
+      error.statusCode = 502;
+      return next(error);
+    }
+  });
+
   router.get("/:id", (req, res, next) => {
     const controller = controllerService.get(req.params.id);
 

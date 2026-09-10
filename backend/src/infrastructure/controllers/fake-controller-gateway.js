@@ -35,4 +35,20 @@ export class FakeControllerGateway {
   disconnect(controllerId) {
     this.connections.delete(controllerId);
   }
+
+  async detectCapabilities(host) {
+    if (this.failures.has(host)) {
+      throw new Error(`Detection failed for host ${host}`);
+    }
+    return (
+      this.capabilities?.get?.(host) ?? {
+        driver: "ws281x",
+        layout: "individualStrips",
+        numChannels: 1,
+        ledCounts: [215],
+        matrixWidth: null,
+        matrixHeight: null,
+      }
+    );
+  }
 }

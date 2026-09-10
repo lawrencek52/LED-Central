@@ -29,6 +29,8 @@ function App() {
   const [canvases, setCanvases] = useState([]);
   const [activeTab, setActiveTab] = useState("effects");
   const [effects, setEffects] = useState([]);
+  const [detecting, setDetecting] = useState(false);
+  const [detected, setDetected] = useState(null);
 
   async function loadDashboard() {
     try {
@@ -86,6 +88,7 @@ function App() {
       else await apiClient.createController(payload);
       setForm(emptyForm);
       setEditingId(null);
+      setDetected(null);
       await loadDashboard();
     } catch (requestError) {
       setError(requestError.message);
@@ -100,6 +103,7 @@ function App() {
       (_, index) => String(controller.ledCounts?.[index] || "215"),
     );
     setEditingId(controller.id);
+    setDetected(null);
     setForm({
       name: controller.name,
       host: controller.host,
@@ -119,6 +123,51 @@ function App() {
         (_, index) => form.ledCounts[index] || "215",
       ),
     });
+  }
+
+  function changeHost(value) {
+    setDetected(null);
+    setForm({ ...form, host: value });
+  }
+
+  // Reads the device's own reported topology (driver, layout, LED counts)
+  // from its web server so the strip-count/LED-count fields below can be
+  // filled from reality instead of the generic "4 strips of 215" defaults -
+  // especially important for HUB75 boards, where "LEDs per strip" doesn't
+  // correspond to anything the firmware has (the whole matrix is one
+  // channel), so that section is replaced with a read-only summary instead.
+  async function detectDevice() {
+    if (!form.host.trim()) {
+      setError("Enter a host name or address before detecting.");
+      return;
+    }
+    setDetecting(true);
+    setError("");
+    try {
+      const capabilities = await apiClient.detectController(form.host.trim());
+      setDetected(capabilities);
+      if (capabilities.driver === "hub75") {
+        setForm({
+          ...form,
+          strips: "1",
+          ledCounts: [String(capabilities.ledCounts[0] || 0)],
+        });
+      } else {
+        setForm({
+          ...form,
+          strips: String(capabilities.numChannels),
+          ledCounts: Array.from(
+            { length: capabilities.numChannels },
+            (_, index) => String(capabilities.ledCounts[index] || 215),
+          ),
+        });
+      }
+    } catch (requestError) {
+      setDetected(null);
+      setError(requestError.message);
+    } finally {
+      setDetecting(false);
+    }
   }
 
   async function handleDelete(id) {
@@ -420,12 +469,27 @@ function App() {
                 <input
                   required
                   value={form.host}
-                  onChange={(event) =>
-                    setForm({ ...form, host: event.target.value })
-                  }
+                  onChange={(event) => changeHost(event.target.value)}
                   placeholder="deck1.local"
                 />
               </label>
+              <div className="form-actions detect-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={detectDevice}
+                  disabled={detecting || !form.host.trim()}
+                >
+                  {detecting ? "Detecting..." : "Detect from device"}
+                </button>
+                {detected && (
+                  <span className="detect-summary">
+                    {detected.driver === "hub75"
+                      ? `Detected: HUB75 matrix, ${detected.matrixWidth}x${detected.matrixHeight} (${detected.ledCounts[0]} LEDs)`
+                      : `Detected: ${detected.numChannels} ${detected.driver} strip${detected.numChannels === 1 ? "" : "s"}`}
+                  </span>
+                )}
+              </div>
               <label>
                 TCP port
                 <input
@@ -439,37 +503,55 @@ function App() {
                   }
                 />
               </label>
-              <label>
-                Number of strips
-                <input
-                  required
-                  type="number"
-                  min="1"
-                  max="16"
-                  value={form.strips}
-                  onChange={(event) => changeStripCount(event.target.value)}
-                />
-              </label>
-              <fieldset className="strip-fields">
-                <legend>LEDs per strip</legend>
-                {form.ledCounts.map((count, index) => (
-                  <label key={index}>
-                    Strip {index + 1}
+              {detected?.driver === "hub75" ? (
+                // A HUB75 matrix is always one channel with no per-strip
+                // concept - asking "LEDs per strip" doesn't map to anything
+                // the firmware has, so show what was detected instead of
+                // strip-count/LED-count inputs. Detect from device above
+                // already set form.strips/ledCounts to match.
+                <p className="hub75-note">
+                  HUB75 matrix detected ({detected.matrixWidth}x
+                  {detected.matrixHeight} = {detected.ledCounts[0]} LEDs) -
+                  wired as a single channel, so there's no strip count or
+                  per-strip LED count to set.
+                </p>
+              ) : (
+                <>
+                  <label>
+                    Number of strips
                     <input
                       required
                       type="number"
                       min="1"
-                      max="65536"
-                      value={count}
-                      onChange={(event) => {
-                        const ledCounts = [...form.ledCounts];
-                        ledCounts[index] = event.target.value;
-                        setForm({ ...form, ledCounts });
-                      }}
+                      max="16"
+                      value={form.strips}
+                      onChange={(event) =>
+                        changeStripCount(event.target.value)
+                      }
                     />
                   </label>
-                ))}
-              </fieldset>
+                  <fieldset className="strip-fields">
+                    <legend>LEDs per strip</legend>
+                    {form.ledCounts.map((count, index) => (
+                      <label key={index}>
+                        Strip {index + 1}
+                        <input
+                          required
+                          type="number"
+                          min="1"
+                          max="65536"
+                          value={count}
+                          onChange={(event) => {
+                            const ledCounts = [...form.ledCounts];
+                            ledCounts[index] = event.target.value;
+                            setForm({ ...form, ledCounts });
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </fieldset>
+                </>
+              )}
               <div className="form-actions">
                 <button
                   className="primary-button"
@@ -489,6 +571,7 @@ function App() {
                     onClick={() => {
                       setEditingId(null);
                       setForm(emptyForm);
+                      setDetected(null);
                     }}
                   >
                     Cancel

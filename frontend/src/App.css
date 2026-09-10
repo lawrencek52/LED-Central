@@ -772,6 +772,27 @@ h3 {
     0 0 0 3px rgba(74, 222, 255, 0.1),
     0 0 18px rgba(74, 222, 255, 0.15);
 }
+.detect-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 2px 0;
+}
+.detect-summary {
+  font-size: 11px;
+  color: var(--cyan);
+  letter-spacing: 0.04em;
+}
+.hub75-note {
+  margin: 2px 0;
+  padding: 14px;
+  border: 1px solid rgba(74, 222, 255, 0.18);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .strip-fields {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -819,6 +840,7 @@ h3 {
   background: transparent;
 }
 .primary-button:disabled,
+.secondary-button:disabled,
 .refresh-button:disabled {
   opacity: 0.5;
   cursor: wait;

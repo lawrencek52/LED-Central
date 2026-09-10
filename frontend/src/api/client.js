@@ -82,6 +82,11 @@ export const apiClient = {
   recheckControllerAudio: (id) =>
     request(`/controllers/${id}/recheck-audio`, { method: "POST" }),
   deleteController: (id) => request(`/controllers/${id}`, { method: "DELETE" }),
+  detectController: (host) =>
+    request("/controllers/detect", {
+      method: "POST",
+      body: JSON.stringify({ host }),
+    }),
   listCanvases: () => request("/canvases"),
   createCanvas: (canvas) =>
     request("/canvases", {
