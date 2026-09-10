@@ -57,6 +57,42 @@ function CanvasPreview({ width, height, strips }) {
   );
 }
 
+// One row per distinct controller (a canvas built from several strips off
+// the same controller, e.g. all 4 channels of one board, only lists it
+// once) rather than one row per strip.
+function uniqueControllers(strips) {
+  const seen = new Map();
+  for (const strip of strips) {
+    if (!seen.has(strip.controllerId)) {
+      seen.set(strip.controllerId, {
+        controllerId: strip.controllerId,
+        controllerName: strip.controllerName,
+        address: strip.address,
+      });
+    }
+  }
+  return [...seen.values()];
+}
+
+function summarizeStat(strips, key) {
+  const values = strips.map((strip) => Number(strip[key]) || 0);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const avg = values.reduce((total, value) => total + value, 0) / values.length;
+  return { min, avg: Math.round(avg * 10) / 10, max };
+}
+
+function StatRange({ label, unit, stat }) {
+  return (
+    <span className="canvas-stat">
+      <b>{label}</b>
+      <small>
+        {stat.min}/{stat.avg}/{stat.max} {unit}
+      </small>
+    </span>
+  );
+}
+
 function Status({ onError }) {
   const [status, setStatus] = useState({ canvases: [] });
   // Frame previews are opt-in per canvas, mirroring the firmware's own web
@@ -152,26 +188,38 @@ function Status({ onError }) {
                   <strong>{canvas.framesPerSecond} FPS</strong>
                 </div>
               </div>
-              <div className="status-strip-list">
-                {canvas.strips.map((strip) => (
+              <div className="status-controller-list">
+                {uniqueControllers(canvas.strips).map((controller) => (
                   <div
-                    className="status-strip"
-                    key={`${strip.controllerId}-${strip.stripIndex}`}
+                    className="status-controller"
+                    key={controller.controllerId}
                   >
-                    <div>
-                      <strong>{strip.controllerName}</strong>
-                      <small>
-                        {strip.address} / Strip {strip.stripIndex + 1}
-                      </small>
-                    </div>
-                    <span>
-                      <b>Recv {strip.recvFps} FPS</b>
-                      <small>Draw {strip.drawFps} FPS</small>
-                      <small>{strip.kibPerSecond} KiB/s</small>
-                      <small>{strip.queuedFrames} queued</small>
-                    </span>
+                    <strong>{controller.controllerName}</strong>
+                    <small>{controller.address}</small>
                   </div>
                 ))}
+              </div>
+              <div className="canvas-stats">
+                <StatRange
+                  label="Recv"
+                  unit="FPS"
+                  stat={summarizeStat(canvas.strips, "recvFps")}
+                />
+                <StatRange
+                  label="Draw"
+                  unit="FPS"
+                  stat={summarizeStat(canvas.strips, "drawFps")}
+                />
+                <StatRange
+                  label="Rate"
+                  unit="KiB/s"
+                  stat={summarizeStat(canvas.strips, "kibPerSecond")}
+                />
+                <StatRange
+                  label="Queued"
+                  unit="frames"
+                  stat={summarizeStat(canvas.strips, "queuedFrames")}
+                />
               </div>
               <button
                 className="secondary-button preview-toggle"
