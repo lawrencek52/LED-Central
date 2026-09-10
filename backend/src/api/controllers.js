@@ -194,6 +194,26 @@ export function createControllerRouter({ controllerService, gateway }) {
     }
   });
 
+  router.post("/:id/preview/start", (req, res, next) => {
+    const controller = controllerService.get(req.params.id);
+    if (!controller)
+      return next(
+        Object.assign(new Error("Controller not found"), { statusCode: 404 }),
+      );
+    gateway.startPreview?.(controller);
+    return res.json({ active: true });
+  });
+
+  router.post("/:id/preview/stop", (req, res, next) => {
+    const controller = controllerService.get(req.params.id);
+    if (!controller)
+      return next(
+        Object.assign(new Error("Controller not found"), { statusCode: 404 }),
+      );
+    gateway.stopPreview?.(controller.id);
+    return res.json({ active: false });
+  });
+
   router.post("/:id/connect", async (req, res, next) => {
     const controller = controllerService.get(req.params.id);
     if (!controller)

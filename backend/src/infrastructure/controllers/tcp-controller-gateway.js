@@ -218,21 +218,27 @@ export class TcpControllerGateway {
     };
   }
 
+  // Previews are opt-in: getPreviewStatus() is a pure read that no longer
+  // has the side effect of opening a connection. Something must call
+  // startPreview() first (mirroring the firmware's own web UI, which only
+  // opens /ws/frames while its preview panel is actually visible) - without
+  // that, this was keeping a frame-preview WebSocket open to every
+  // controller with an active canvas mapping for the lifetime of the
+  // backend process, regardless of whether anyone was looking, since the
+  // 1s status poll (Status.jsx) called this unconditionally for every strip.
   getPreviewStatus(controller) {
-    let state = this.previewStates.get(controller.id);
+    const state = this.previewStates.get(controller.id);
     if (!state) {
-      state = {
-        socket: null,
+      return {
+        active: false,
+        connected: false,
         width: 0,
         height: 0,
         frame: null,
-        received: [],
-        bytes: [],
+        recvFps: 0,
         drawFps: 0,
-        statsAt: 0,
+        kibPerSecond: 0,
       };
-      this.previewStates.set(controller.id, state);
-      this.connectPreview(controller, state);
     }
     if (Date.now() - state.statsAt >= 1000)
       this.refreshDynamicStats(controller, state);
@@ -240,6 +246,7 @@ export class TcpControllerGateway {
     state.received = state.received.filter((at) => at >= now - 1000);
     state.bytes = state.bytes.filter((item) => item.at >= now - 1000);
     return {
+      active: true,
       connected: state.socket?.readyState === WebSocket.OPEN,
       width: state.width,
       height: state.height,
@@ -252,6 +259,33 @@ export class TcpControllerGateway {
         ).toFixed(1),
       ),
     };
+  }
+
+  // Idempotent: safe to call repeatedly while a preview panel stays open.
+  startPreview(controller) {
+    let state = this.previewStates.get(controller.id);
+    if (state?.active) return;
+    state = {
+      active: true,
+      socket: null,
+      width: 0,
+      height: 0,
+      frame: null,
+      received: [],
+      bytes: [],
+      drawFps: 0,
+      statsAt: 0,
+    };
+    this.previewStates.set(controller.id, state);
+    this.connectPreview(controller, state);
+  }
+
+  stopPreview(controllerId) {
+    const state = this.previewStates.get(controllerId);
+    if (!state) return;
+    state.active = false;
+    this.previewStates.delete(controllerId);
+    state.socket?.close();
   }
 
   refreshDynamicStats(controller, state) {
@@ -308,7 +342,7 @@ export class TcpControllerGateway {
       if (state.socket === socket) {
         state.socket = null;
         setTimeout(() => {
-          if (!state.socket) this.connectPreview(controller, state);
+          if (!state.socket && state.active) this.connectPreview(controller, state);
         }, 1000);
       }
     });

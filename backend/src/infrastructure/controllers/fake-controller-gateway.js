@@ -36,6 +36,29 @@ export class FakeControllerGateway {
     this.connections.delete(controllerId);
   }
 
+  startPreview(controller) {
+    this.previewActive ??= new Set();
+    this.previewActive.add(controller.id);
+  }
+
+  stopPreview(controllerId) {
+    this.previewActive?.delete(controllerId);
+  }
+
+  getPreviewStatus(controller) {
+    const active = Boolean(this.previewActive?.has(controller.id));
+    return {
+      active,
+      connected: active,
+      width: 0,
+      height: 0,
+      frame: null,
+      recvFps: 0,
+      drawFps: 0,
+      kibPerSecond: 0,
+    };
+  }
+
   async detectCapabilities(host) {
     if (this.failures.has(host)) {
       throw new Error(`Detection failed for host ${host}`);

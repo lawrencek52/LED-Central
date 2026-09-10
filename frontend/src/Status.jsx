@@ -38,6 +38,16 @@ function Preview({ preview, reversed }) {
 
 function Status({ onError }) {
   const [status, setStatus] = useState({ canvases: [] });
+  // Frame previews are opt-in per controller, mirroring the firmware's own
+  // web UI (which only opens its preview socket while that panel is
+  // visible) - the backend used to open one permanently for every
+  // controller with an active canvas mapping the moment this view first
+  // polled status, whether or not anyone was actually looking.
+  const [previewEnabled, setPreviewEnabled] = useState(() => new Set());
+  const previewEnabledRef = useRef(previewEnabled);
+  useEffect(() => {
+    previewEnabledRef.current = previewEnabled;
+  }, [previewEnabled]);
 
   useEffect(() => {
     let active = true;
@@ -54,8 +64,25 @@ function Status({ onError }) {
     return () => {
       active = false;
       clearInterval(timer);
+      previewEnabledRef.current.forEach((controllerId) => {
+        apiClient.stopControllerPreview(controllerId).catch(() => {});
+      });
     };
   }, [onError]);
+
+  function togglePreview(controllerId) {
+    setPreviewEnabled((current) => {
+      const next = new Set(current);
+      if (next.has(controllerId)) {
+        next.delete(controllerId);
+        apiClient.stopControllerPreview(controllerId).catch(() => {});
+      } else {
+        next.add(controllerId);
+        apiClient.startControllerPreview(controllerId).catch(() => {});
+      }
+      return next;
+    });
+  }
 
   return (
     <section className="status-workspace">
@@ -85,26 +112,42 @@ function Status({ onError }) {
               </div>
             </div>
             <div className="status-strip-list">
-              {canvas.strips.map((strip) => (
-                <div
-                  className="status-strip"
-                  key={`${strip.controllerId}-${strip.stripIndex}`}
-                >
-                  <div>
-                    <strong>{strip.controllerName}</strong>
-                    <small>
-                      {strip.address} / Strip {strip.stripIndex + 1}
-                    </small>
+              {canvas.strips.map((strip) => {
+                const previewOn = previewEnabled.has(strip.controllerId);
+                return (
+                  <div
+                    className="status-strip"
+                    key={`${strip.controllerId}-${strip.stripIndex}`}
+                  >
+                    <div>
+                      <strong>{strip.controllerName}</strong>
+                      <small>
+                        {strip.address} / Strip {strip.stripIndex + 1}
+                      </small>
+                    </div>
+                    <span>
+                      <b>Recv {strip.recvFps} FPS</b>
+                      <small>Draw {strip.drawFps} FPS</small>
+                      <small>{strip.kibPerSecond} KiB/s</small>
+                      <small>{strip.queuedFrames} queued</small>
+                    </span>
+                    <button
+                      className="secondary-button preview-toggle"
+                      type="button"
+                      onClick={() => togglePreview(strip.controllerId)}
+                    >
+                      {previewOn ? "Disable preview" : "Enable preview"}
+                    </button>
+                    {previewOn ? (
+                      <Preview preview={strip.preview} reversed={strip.reversed} />
+                    ) : (
+                      <span className="status-preview-empty">
+                        Preview disabled
+                      </span>
+                    )}
                   </div>
-                  <span>
-                    <b>Recv {strip.recvFps} FPS</b>
-                    <small>Draw {strip.drawFps} FPS</small>
-                    <small>{strip.kibPerSecond} KiB/s</small>
-                    <small>{strip.queuedFrames} queued</small>
-                  </span>
-                  <Preview preview={strip.preview} reversed={strip.reversed} />
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         ))
