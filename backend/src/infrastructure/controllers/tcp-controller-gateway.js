@@ -1,8 +1,17 @@
 import net from "node:net";
+import zlib from "node:zlib";
 import WebSocket from "ws";
 
 const PIXEL_DATA_COMMAND = 3;
 const PIXEL_HEADER_SIZE = 24;
+// Matches SocketServer::ProcessCompletePacket's compressed-packet framing in
+// the firmware (src/socketserver.cpp): a 16-byte wrapper - magic, compressed
+// size, expanded size, then 4 reserved/padding bytes - around a zlib stream
+// (uzlib on the receiving end only understands zlib's own header/checksum
+// format, not raw deflate or gzip) that inflates back to exactly the
+// standard, uncompressed packet built by encodePixelFrame().
+const COMPRESSED_HEADER = 0x44415645; // ASCII "DAVE", read back little-endian
+const COMPRESSED_HEADER_SIZE = 16;
 
 export class TcpControllerGateway {
   constructor({ connectionTimeoutMs = 5000, webPort = 80 } = {}) {
@@ -156,7 +165,9 @@ export class TcpControllerGateway {
       .then(async () => {
         let socket = await this.connect(controller, channelMask);
         for (const frame of frames) {
-          const packet = encodePixelFrame(frame);
+          const raw = encodePixelFrame(frame);
+          const compressed = encodeCompressedPacket(raw);
+          const packet = compressed.length < raw.length ? compressed : raw;
           for (let attempt = 0; attempt < 2; attempt += 1) {
             if (socket.destroyed || !socket.writable) {
               socket = await this.connect(controller, channelMask);
@@ -511,6 +522,22 @@ export function encodePixelFrame(frame) {
   header.writeBigUInt64LE(BigInt(Math.floor(timestampMs / 1000)), 8);
   header.writeBigUInt64LE(BigInt((timestampMs % 1000) * 1000), 16);
   return Buffer.concat([header, pixels]);
+}
+
+// Wraps an already-encoded packet (as built by encodePixelFrame) in the
+// firmware's compressed-packet framing, so a mostly-uniform frame (a mostly
+// black canvas, a solid-color wash, etc.) costs a fraction of its raw RGB
+// size on the wire. Only worth it above the wrapper's own fixed overhead, so
+// callers should fall back to the raw packet when the packet is tiny (e.g. a
+// near-empty canvas) or when compression didn't actually help (already
+// high-entropy pixel data can come back slightly larger than the input).
+export function encodeCompressedPacket(packet) {
+  const compressed = zlib.deflateSync(packet);
+  const wrapper = Buffer.alloc(COMPRESSED_HEADER_SIZE);
+  wrapper.writeUInt32LE(COMPRESSED_HEADER, 0);
+  wrapper.writeUInt32LE(compressed.length, 4);
+  wrapper.writeUInt32LE(packet.length, 8);
+  return Buffer.concat([wrapper, compressed]);
 }
 
 function write(socket, data) {
