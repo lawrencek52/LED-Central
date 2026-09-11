@@ -27,8 +27,7 @@ function CanvasPreview({ width, height, strips }) {
         const destY = strip.y + row;
         if (destY < 0 || destY >= height) continue;
         for (let column = 0; column < preview.width; column += 1) {
-          const destX =
-            strip.x + (strip.reversed ? preview.width - 1 - column : column);
+          const destX = strip.x + column;
           if (destX < 0 || destX >= width) continue;
           const srcIndex = (row * preview.width + column) * 3;
           const destIndex = (destY * width + destX) * 4;

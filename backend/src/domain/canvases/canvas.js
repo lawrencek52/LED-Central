@@ -62,6 +62,24 @@ export function mapCanvasFrame(canvas, frame) {
   return mapped;
 }
 
+// Inverse of mapCanvasFrame's own coordinatesFor(mapping).map(...) read-out:
+// given a mapping's pixels already in physical LED wire order (as sent to
+// the controller), rebuilds a plain row-major raster local to the mapping's
+// own width x height rectangle - what a human expects to see, independent of
+// wiring. Used for status/preview rendering, where a serpentine mapping's
+// physical pixel order otherwise reads as a jumbled image (alternating rows
+// shifted/mirrored) unless something first undoes the zigzag.
+export function previewGridForMapping(mapping, pixels) {
+  const grid = Array.from({ length: mapping.width * mapping.height }, () => [0, 0, 0]);
+  coordinatesFor(mapping).forEach(([x, y], index) => {
+    const localX = x - mapping.x;
+    const localY = y - mapping.y;
+    if (localX < 0 || localX >= mapping.width || localY < 0 || localY >= mapping.height) return;
+    grid[localY * mapping.width + localX] = pixels[index] ?? [0, 0, 0];
+  });
+  return grid;
+}
+
 function coordinatesFor(mapping) {
   if (mapping.layout === 'serpentine') return serpentineCoordinates(mapping);
 

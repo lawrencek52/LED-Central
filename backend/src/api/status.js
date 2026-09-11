@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { normalizeCanvas, previewGridForMapping } from "../domain/canvases/canvas.js";
 
 export function createStatusRouter({
   canvasService,
@@ -11,7 +12,7 @@ export function createStatusRouter({
   router.get("/", async (req, res, next) => {
     try {
       const sessions = playbackService.list();
-      const canvases = canvasService.list().map((canvas) => {
+      const canvases = canvasService.list().map(normalizeCanvas).map((canvas) => {
         const session = sessions.find(
           (item) => item.canvasId === canvas.id && item.status === "playing",
         );
@@ -48,11 +49,15 @@ export function createStatusRouter({
             queuedFrames: queue.queuedFrames,
             preview: latestFrame
               ? {
-                  width: mapping.width || canvas.width,
-                  height: mapping.height || 1,
-                  pixels: Buffer.from(latestFrame.pixels.flat()).toString(
-                    "base64",
-                  ),
+                  width: mapping.width,
+                  height: mapping.height,
+                  // latestFrame.pixels is in physical LED wire order (as sent
+                  // to the controller) - for a serpentine mapping that's a
+                  // zigzag, not a raster, so previewGridForMapping() un-shuffles
+                  // it back into a plain row-major image first.
+                  pixels: Buffer.from(
+                    previewGridForMapping(mapping, latestFrame.pixels).flat(),
+                  ).toString("base64"),
                 }
               : preview.frame
                 ? {
