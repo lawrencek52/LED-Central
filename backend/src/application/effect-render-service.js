@@ -58,6 +58,7 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
       parameters: {
         ...parameters,
         stripSpacingRatio: canvas.stripSpacingRatio ?? 1,
+        upIsPositiveY: matrixUpIsPositiveY(canvas.mappings?.[0]),
       },
       timestamp,
     });
@@ -106,6 +107,28 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
     });
   });
   return pixels;
+}
+
+// Which way is "up" in canvas (x, y) space for a non-parallel (single
+// matrix mapping) canvas, so matrix-aware effects (rocket-fireworks) can
+// launch toward the physical top of the display regardless of wiring.
+//
+// HUB75 ("series" layout) always scans row 0 first, physically the top row
+// - the same convention NightDriverStrip's own HUB75 effects rely on when
+// drawing text top-down - so row 0 is always up, unconditionally.
+//
+// A single addressable strip wired as a grid ("serpentine") has no such
+// hardware guarantee: canvas row 0 is physically wherever the installer
+// told canvas.js LED 0 starts (originCorner), independent of axis (axis
+// only controls the zigzag wire order within that starting point, not
+// which corner it starts from). If originCorner names "top", row 0 is up,
+// same as HUB75; if it names "bottom", row 0 is physically the *bottom*,
+// so increasing y is up instead.
+function matrixUpIsPositiveY(mapping) {
+  if (mapping?.layout === "serpentine") {
+    return Boolean(mapping.originCorner?.includes("bottom"));
+  }
+  return false;
 }
 
 function parallelCoordinates(mapping) {
@@ -332,6 +355,19 @@ const renderers = {
   // (computeFireworkPoints below) since it's identical across every one of
   // this tick's per-mapping calls.
   //
+  // A direct matrix canvas (one real 2D grid - HUB75, or a single strip
+  // wired serpentine) has no separate physical strips to spread across, so
+  // it uses the exact same physics with the two axes swapped: rockets climb
+  // the canvas's actual vertical extent instead of `width`, and spread
+  // across its horizontal extent instead of `rows`. `computeFireworkPoints`
+  // itself doesn't know or care which canvas axis is which - it just wants
+  // "how many launch positions" and "how far to climb" - so only the
+  // plotting step below (parallel vs matrix) needs to know the mapping.
+  // "Up" is whichever canvas direction `renderCanvasEffect` determined is
+  // physically up for this canvas's wiring (`upIsPositiveY` - see
+  // matrixUpIsPositiveY), not always +y, since a serpentine strip can be
+  // wired starting from either the top or the bottom.
+  //
   // Everything is generated on demand from a deterministic per-event-index
   // RNG rather than any persisted state - the same "make an event, check
   // whether `elapsedSeconds` falls in one of its phases" approach
@@ -359,6 +395,11 @@ const renderers = {
     const stripSpacingRatio = Math.max(0.01, Number(parameters.stripSpacingRatio ?? 1));
     const stripSpacingCm = ledSpacingCm * stripSpacingRatio;
     const reversed = Boolean(parameters.reversed);
+    // Set by renderCanvasEffect from the canvas mapping's own wiring
+    // (matrixUpIsPositiveY) - which canvas y direction rockets should climb
+    // toward. Only meaningful in matrix mode; parallel mode always climbs
+    // along `width` regardless (each strip's own "up" is its own far end).
+    const upIsPositiveY = Boolean(parameters.upIsPositiveY);
     // Deliberately *not* `parameters.randomSeed` - renderCanvasEffect
     // overwrites that per parallel mapping (stableSeed(controllerId:
     // stripIndex), so every strip's own strip gets independent flicker in
@@ -371,23 +412,39 @@ const renderers = {
     const startedAtMs = timestamp - elapsedSeconds * 1000;
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
 
-    // A canvas made of parallel-mapped strips is one row per strip; a direct
-    // multi-row matrix canvas (no parallel mappings) renders every row in
-    // this one call instead.
+    // A canvas made of parallel-mapped strips is one row per strip, and
+    // rockets climb along each strip's own length (`width`), spreading
+    // sideways onto neighboring strips (`rows` = stripCount). A direct
+    // matrix canvas with an actual vertical extent (no parallel mappings,
+    // height > 1 - a real 2D grid) has no separate strips to spread across,
+    // so the two axes swap: rockets climb the canvas's vertical extent
+    // (`height`) and spread across its horizontal extent (`width`) instead.
+    // A matrix canvas with height <= 1 has no vertical extent to climb at
+    // all (it's really a strip's worth of pixels laid out in one row), so
+    // it keeps the original width-climbing behavior rather than trying to
+    // climb a single pixel. `computeFireworkPoints` just takes "how many
+    // launch positions" (physicsRows) and "how far to climb"
+    // (physicsAscendLength) - it doesn't care which canvas axis either one
+    // actually is, so only the plotting loop below needs to know the
+    // difference.
     const isParallel = parameters.stripCount !== undefined;
-    const rows = isParallel
+    const climbsVertically = !isParallel && height > 1;
+    const physicsRows = isParallel
       ? Math.max(1, Math.round(Number(parameters.stripCount)))
-      : Math.max(1, height);
+      : climbsVertically
+        ? Math.max(1, width)
+        : Math.max(1, height);
+    const physicsAscendLength = climbsVertically ? Math.max(1, height) : width;
     const onlyRow = isParallel
-      ? clamp(Math.round(Number(parameters.mappingOrdinal ?? 0)), 0, rows - 1)
+      ? clamp(Math.round(Number(parameters.mappingOrdinal ?? 0)), 0, physicsRows - 1)
       : null;
 
     const points = memoizedFireworkPoints(
-      [rows, width, randomSeed, launchIntervalSeconds, stripSpacingCm, ledSpacingCm, elapsedSeconds, audio?.available, audio?.lastBeatAt].join(":"),
+      [physicsRows, physicsAscendLength, randomSeed, launchIntervalSeconds, stripSpacingCm, ledSpacingCm, elapsedSeconds, audio?.available, audio?.lastBeatAt].join(":"),
       () =>
         computeFireworkPoints({
-          rows,
-          width,
+          rows: physicsRows,
+          width: physicsAscendLength,
           palette,
           launchIntervalSeconds,
           stripSpacingCm,
@@ -401,9 +458,22 @@ const renderers = {
 
     for (const point of points) {
       if (onlyRow !== null && point.row !== onlyRow) continue;
-      const pixelRow = isParallel ? 0 : point.row;
-      const displayCol = reversed ? width - 1 - point.col : point.col;
-      plotBlended1DRow(pixels, width, pixelRow, displayCol, point.color);
+      if (climbsVertically) {
+        // point.row is the spread position (0..width-1); point.col is the
+        // ascend position (0..height-1, 0 = launch/ground, increasing =
+        // climbing) - `reversed` mirrors the spread axis, same as the
+        // non-climbing case's own launch-side flip, and `upIsPositiveY`
+        // picks which canvas y direction "climbing" actually moves toward.
+        const x = reversed ? width - 1 - point.row : point.row;
+        const y = upIsPositiveY
+          ? point.col
+          : physicsAscendLength - 1 - point.col;
+        plotBlended1DColumn(pixels, width, height, x, y, point.color);
+      } else {
+        const pixelRow = isParallel ? 0 : point.row;
+        const displayCol = reversed ? width - 1 - point.col : point.col;
+        plotBlended1DRow(pixels, width, pixelRow, displayCol, point.color);
+      }
     }
     return pixels;
   },
@@ -1070,6 +1140,15 @@ const renderers = {
   "twinkle-stars": ({ width, height, parameters, timestamp }) => {
     const totalPixels = width * height;
     const pixels = Array.from({ length: totalPixels }, () => [0, 0, 0]);
+    // A star's drift is computed as one scalar position moved by velocity*age
+    // and plotted through a flat buffer index. That's a fine "wrap around
+    // the strip" motion for a genuine 1D strip, but on a real 2D matrix
+    // (height > 1) a flat index crossing a row boundary teleports from the
+    // right edge of one row to the left edge of the next - looked like the
+    // star took a U-turn. On a matrix, constrain each star's own drift to
+    // one axis (chosen per star below) so it only ever moves along a single
+    // row or column and clamps at that axis's own edge instead.
+    const isMatrix = height > 1;
     const probability = Math.max(0.01, Number(parameters.probability ?? 1));
     const starSize = Math.max(1, Math.round(Number(parameters.starSize ?? 1)));
     const maxSpeed = Number(parameters.maxSpeed ?? 2);
@@ -1106,6 +1185,9 @@ const renderers = {
       const birthTime = (slot + rng()) * avgInterval;
       const age = elapsedSeconds - birthTime;
       const startIndex = rng() * totalPixels;
+      const startX = Math.floor(rng() * width);
+      const startY = Math.floor(rng() * height);
+      const horizontal = rng() < 0.5;
       const velocity = (rng() * 2 - 1) * maxSpeed;
       if (age < 0 || age >= totalLifetime) continue;
 
@@ -1121,13 +1203,32 @@ const renderers = {
         : rainbow
           ? hsvToRgb(rng() * 255, 255, 255)
           : palette[Math.floor(rng() * palette.length)];
-      const position = startIndex + velocity * age;
       const shade = starColor.map((channel) =>
         Math.round(channel * brightness),
       );
 
-      for (let s = 0; s < starSize; s += 1) {
-        plotBlended1D(pixels, totalPixels, position + s, shade);
+      if (isMatrix) {
+        const axisPosition =
+          (horizontal ? startX : startY) + velocity * age;
+        for (let s = 0; s < starSize; s += 1) {
+          if (horizontal) {
+            plotBlended1DRow(pixels, width, startY, axisPosition + s, shade);
+          } else {
+            plotBlended1DColumn(
+              pixels,
+              width,
+              height,
+              startX,
+              axisPosition + s,
+              shade,
+            );
+          }
+        }
+      } else {
+        const position = startIndex + velocity * age;
+        for (let s = 0; s < starSize; s += 1) {
+          plotBlended1D(pixels, totalPixels, position + s, shade);
+        }
       }
     }
     return pixels;
@@ -1951,6 +2052,20 @@ function plotBlended1DRow(pixels, width, row, x, color) {
   const rowOffset = row * width;
   blendChannel(pixels, rowOffset + lower, color, 1 - frac);
   blendChannel(pixels, rowOffset + upper, color, frac);
+}
+
+// plotBlended1DRow's transpose: anti-aliased blend between the two rows
+// straddling a fractional y, at one fixed integer column - used by
+// rocket-fireworks in matrix mode, where the smooth (sub-pixel) motion runs
+// vertically (climbing) rather than horizontally (along a strip).
+function plotBlended1DColumn(pixels, width, height, x, y, color) {
+  const clampedX = Math.max(0, Math.min(width - 1, Math.round(x)));
+  const clampedY = Math.max(0, Math.min(height - 1, y));
+  const lower = Math.floor(clampedY);
+  const upper = Math.min(height - 1, lower + 1);
+  const frac = clampedY - lower;
+  blendChannel(pixels, lower * width + clampedX, color, 1 - frac);
+  blendChannel(pixels, upper * width + clampedX, color, frac);
 }
 
 const ROCKET_GRAVITY_CM = 100; // cm/sec^2 - tuned for a ~2-3s ascent up a real ~300-360cm strip
