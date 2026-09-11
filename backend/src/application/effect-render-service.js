@@ -2089,7 +2089,7 @@ function plotBlended1DColumn(pixels, width, height, x, y, color) {
 }
 
 const ROCKET_GRAVITY_CM = 100; // cm/sec^2 - tuned for a ~2-3s ascent up a real ~300-360cm strip
-const PARTICLE_GRAVITY_CM = 40; // gentler fall for a lingering "willow" droop on particles
+const PARTICLE_GRAVITY_CM = 15; // gentler fall for a lingering "willow" droop on particles
 const MAX_APEX_WAIT_SECONDS = 0.75; // cap on pausing at apogee for a beat, so a quiet passage can't strand a rocket forever
 const MIN_PARTICLE_LIFE_SECONDS = 1.3;
 const MAX_PARTICLE_LIFE_SECONDS = 2.5;
