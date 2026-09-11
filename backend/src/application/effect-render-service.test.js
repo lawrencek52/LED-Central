@@ -1074,19 +1074,19 @@ test("rocket-fireworks: a rocket stuck waiting for a beat through silence explod
     effect,
     canvas,
     parameters: {
-      timeSeconds: apexAtSeconds + 3.9,
+      timeSeconds: apexAtSeconds + 0.65,
       audio: { available: true, lastBeatAt: 0 },
     },
-    timestamp: (apexAtSeconds + 3.9) * 1000,
+    timestamp: (apexAtSeconds + 0.65) * 1000,
   });
   const timedOut = service.render({
     effect,
     canvas,
     parameters: {
-      timeSeconds: apexAtSeconds + 4.1,
+      timeSeconds: apexAtSeconds + 0.85,
       audio: { available: true, lastBeatAt: 0 },
     },
-    timestamp: (apexAtSeconds + 4.1) * 1000,
+    timestamp: (apexAtSeconds + 0.85) * 1000,
   });
   const litCount = (frame) => frame.pixels.filter((p) => p.some(Boolean)).length;
   assert.ok(litCount(stillWaiting) <= 2);

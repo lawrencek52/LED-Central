@@ -439,8 +439,26 @@ const renderers = {
       ? clamp(Math.round(Number(parameters.mappingOrdinal ?? 0)), 0, physicsRows - 1)
       : null;
 
+    // The fixed MIN/MAX_EXPLOSION_RADIUS_CM range was tuned for the original
+    // strip-wall design target, where the "canvas" spans however many real
+    // strips there are times their spacing (e.g. 8 strips at a 24.38 ratio
+    // is a ~195cm-tall virtual canvas) - comfortably larger than a 60-140cm
+    // burst. A real matrix's physical extent is usually much smaller (e.g.
+    // a 64-LED-tall panel at ~1cm pitch is only 64cm), so that same fixed
+    // range can produce explosions bigger than the display. On a genuine
+    // matrix, cap the max radius at 15% of its physical vertical extent (a
+    // 30% diameter) instead, scaling the min radius down by the same ratio
+    // as the original range so explosions keep some size variety rather
+    // than all landing exactly on the cap.
+    const maxExplosionRadiusCm = climbsVertically
+      ? physicsAscendLength * ledSpacingCm * 0.15
+      : MAX_EXPLOSION_RADIUS_CM;
+    const minExplosionRadiusCm = climbsVertically
+      ? maxExplosionRadiusCm * (MIN_EXPLOSION_RADIUS_CM / MAX_EXPLOSION_RADIUS_CM)
+      : MIN_EXPLOSION_RADIUS_CM;
+
     const points = memoizedFireworkPoints(
-      [physicsRows, physicsAscendLength, randomSeed, launchIntervalSeconds, stripSpacingCm, ledSpacingCm, elapsedSeconds, audio?.available, audio?.lastBeatAt].join(":"),
+      [physicsRows, physicsAscendLength, randomSeed, launchIntervalSeconds, stripSpacingCm, ledSpacingCm, minExplosionRadiusCm, maxExplosionRadiusCm, elapsedSeconds, audio?.available, audio?.lastBeatAt].join(":"),
       () =>
         computeFireworkPoints({
           rows: physicsRows,
@@ -449,6 +467,8 @@ const renderers = {
           launchIntervalSeconds,
           stripSpacingCm,
           ledSpacingCm,
+          minExplosionRadiusCm,
+          maxExplosionRadiusCm,
           randomSeed,
           elapsedSeconds,
           startedAtMs,
@@ -2070,11 +2090,14 @@ function plotBlended1DColumn(pixels, width, height, x, y, color) {
 
 const ROCKET_GRAVITY_CM = 100; // cm/sec^2 - tuned for a ~2-3s ascent up a real ~300-360cm strip
 const PARTICLE_GRAVITY_CM = 40; // gentler fall for a lingering "willow" droop on particles
-const MAX_APEX_WAIT_SECONDS = 4; // cap on pausing at apogee for a beat, so a quiet passage can't strand a rocket forever
+const MAX_APEX_WAIT_SECONDS = 0.75; // cap on pausing at apogee for a beat, so a quiet passage can't strand a rocket forever
 const MIN_PARTICLE_LIFE_SECONDS = 1.3;
 const MAX_PARTICLE_LIFE_SECONDS = 2.5;
 const MIN_EXPLOSION_RADIUS_CM = 60;
 const MAX_EXPLOSION_RADIUS_CM = 140;
+const PARTICLE_IGNITE_FRACTION = 0.15; // fraction of a particle's life spent ramping up from dark to full brightness
+const PARTICLE_TRAIL_STEPS = 3; // dimmer echoes behind each particle, in addition to its current position
+const PARTICLE_TRAIL_STEP_SECONDS = 0.035; // time between each trail echo
 
 // Single-entry memo for computeFireworkPoints (see rocket-fireworks' use of
 // it): every render tick has exactly one set of inputs in flight across all
@@ -2105,6 +2128,8 @@ export function makeFireworkEvent(
   palette,
   launchIntervalSeconds,
   ledSpacingCm,
+  minExplosionRadiusCm = MIN_EXPLOSION_RADIUS_CM,
+  maxExplosionRadiusCm = MAX_EXPLOSION_RADIUS_CM,
 ) {
   const rng = mulberry32(canvasSeed + n * 104729 + 11);
   const jitter = (rng() - 0.5) * launchIntervalSeconds * 0.8;
@@ -2134,7 +2159,7 @@ export function makeFireworkEvent(
     MIN_PARTICLE_LIFE_SECONDS +
     rng() * (MAX_PARTICLE_LIFE_SECONDS - MIN_PARTICLE_LIFE_SECONDS);
   const explosionRadiusCm =
-    MIN_EXPLOSION_RADIUS_CM + rng() * (MAX_EXPLOSION_RADIUS_CM - MIN_EXPLOSION_RADIUS_CM);
+    minExplosionRadiusCm + rng() * (maxExplosionRadiusCm - minExplosionRadiusCm);
   const explosionSpeedCm = explosionRadiusCm / lifeSeconds;
 
   const particles = [];
@@ -2172,6 +2197,8 @@ function computeFireworkPoints({
   elapsedSeconds,
   startedAtMs,
   audio,
+  minExplosionRadiusCm = MIN_EXPLOSION_RADIUS_CM,
+  maxExplosionRadiusCm = MAX_EXPLOSION_RADIUS_CM,
 }) {
   // A rocket event's own worst-case duration (bounded so the window scan
   // only ever has to check a handful of candidate events, the same trick
@@ -2193,6 +2220,8 @@ function computeFireworkPoints({
       palette,
       launchIntervalSeconds,
       ledSpacingCm,
+      minExplosionRadiusCm,
+      maxExplosionRadiusCm,
     );
     collectFireworkPoints(event, {
       elapsedSeconds,
@@ -2277,16 +2306,24 @@ function collectFireworkPoints(
 
   // Phases 2/3/4: burst particles traveling sideways (possibly onto
   // neighboring strips) and along their own strip's length, burning, and
-  // occasionally flashing white right at the end.
+  // occasionally flashing white right at the end. Each particle's own
+  // radial position at a given time-since-explosion is reused below both
+  // for its current position and for a short trail of earlier positions
+  // (particlePositionAt), so the trail always traces back along the exact
+  // same path the particle itself is following.
+  const particlePositionAt = (particle, t) => {
+    const xCm = Math.cos(particle.angle) * particle.speedCm * t;
+    const yCm =
+      Math.sin(particle.angle) * particle.speedCm * t -
+      0.5 * PARTICLE_GRAVITY_CM * t * t;
+    return {
+      row: Math.round(event.originRow + xCm / stripSpacingCm),
+      col: event.apexHeightLed + yCm / ledSpacingCm,
+    };
+  };
+
   for (const particle of event.particles) {
     if (tSinceExplosion > particle.life) continue;
-    const xCm = Math.cos(particle.angle) * particle.speedCm * tSinceExplosion;
-    const yCm =
-      Math.sin(particle.angle) * particle.speedCm * tSinceExplosion -
-      0.5 * PARTICLE_GRAVITY_CM * tSinceExplosion * tSinceExplosion;
-    const row = Math.round(event.originRow + xCm / stripSpacingCm);
-    const col = event.apexHeightLed + yCm / ledSpacingCm;
-    if (row < 0 || row >= rows || col < 0 || col > width - 1) continue;
 
     const lifeFraction = tSinceExplosion / particle.life;
     let brightness = particle.flareUp
@@ -2299,9 +2336,30 @@ function collectFireworkPoints(
       color = [255, 255, 255];
       brightness = 1;
     }
+    // Ramps from dark to full brightness over the particle's first
+    // PARTICLE_IGNITE_FRACTION of life, on top of whatever the fade/flare
+    // envelope above already gives it - makes a particle visibly detach
+    // from the rocket and "light up" as it clears the burst point, instead
+    // of appearing instantly at full brightness right on top of it.
+    brightness *= Math.min(1, lifeFraction / PARTICLE_IGNITE_FRACTION);
     brightness = clamp(brightness, 0, 1);
-    const finalColor = color.map((channel) => Math.round(channel * brightness));
-    points.push({ row, col, color: finalColor });
+
+    // The particle's own current position, plus a short trail of dimmer
+    // echoes at slightly earlier times along the same path - a lit particle
+    // with nothing behind it read as popping into existence mid-air rather
+    // than tracing out from the rocket.
+    for (let step = 0; step <= PARTICLE_TRAIL_STEPS; step += 1) {
+      const trailT = tSinceExplosion - step * PARTICLE_TRAIL_STEP_SECONDS;
+      if (trailT < 0) break;
+      const { row, col } = particlePositionAt(particle, trailT);
+      if (row < 0 || row >= rows || col < 0 || col > width - 1) continue;
+      const trailBrightness =
+        brightness * (1 - step / (PARTICLE_TRAIL_STEPS + 1));
+      const finalColor = color.map((channel) =>
+        Math.round(channel * trailBrightness),
+      );
+      points.push({ row, col, color: finalColor });
+    }
   }
 }
 
