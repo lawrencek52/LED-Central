@@ -780,7 +780,7 @@ const renderers = {
     // Simulate at a larger virtual size on a too-short flame axis (see
     // FIRE_SUPERSAMPLE_MIN_WIDTH above), downsampling back down at the end.
     const flameAxisSimSize =
-      flameAxisCanvasSize < FIRE_SUPERSAMPLE_MIN_WIDTH
+      flameAxisCanvasSize <= FIRE_SUPERSAMPLE_MIN_WIDTH
         ? FIRE_SUPERSAMPLE_WIDTH
         : flameAxisCanvasSize;
     const ledCount = mirrored
@@ -911,7 +911,21 @@ const renderers = {
     const isParallel = parameters.stripCount !== undefined;
     const isMatrix = !isParallel && canvasHeight > 1;
     const upIsPositiveY = Boolean(parameters.upIsPositiveY);
-    const ledCount = isMatrix ? canvasHeight : canvasWidth;
+
+    // The flame axis is whichever canvas dimension the fire actually climbs
+    // along - height on a matrix, width otherwise. Simulate at a larger
+    // virtual size on a too-short flame axis (see FIRE_SUPERSAMPLE_MIN_WIDTH
+    // above - same trick `fire` uses), downsampling back down at the end:
+    // this automaton is tuned for the same 100+-cell strip scale and reads
+    // as a lit sliver rather than a graded flame on a matrix no wider than a
+    // typical panel's height (64 or less).
+    const flameAxisCanvasSize = isMatrix ? canvasHeight : canvasWidth;
+    const laneAxisSize = isMatrix ? canvasWidth : canvasHeight;
+    const flameAxisSimSize =
+      flameAxisCanvasSize <= FIRE_SUPERSAMPLE_MIN_WIDTH
+        ? FIRE_SUPERSAMPLE_WIDTH
+        : flameAxisCanvasSize;
+    const ledCount = flameAxisSimSize;
     const SPARKING = 180;
     const SPARKS = 5;
 
@@ -936,7 +950,9 @@ const renderers = {
       },
     });
 
-    const pixels = Array.from({ length: canvasWidth * canvasHeight }, () => [0, 0, 0]);
+    const simWidth = isMatrix ? laneAxisSize : flameAxisSimSize;
+    const simHeight = isMatrix ? flameAxisSimSize : laneAxisSize;
+    const pixels = Array.from({ length: simWidth * simHeight }, () => [0, 0, 0]);
     // The spark end is the *low* index here (opposite of `fire`), which
     // physically belongs at the ground on a matrix - so axisPos is already
     // matrixAscendToY's own "ascend progress" convention (0 = ground),
@@ -945,13 +961,13 @@ const renderers = {
       if (isMatrix) {
         setPixelAllColumns(
           pixels,
-          canvasWidth,
-          canvasHeight,
-          matrixAscendToY(axisPos, ledCount, upIsPositiveY),
+          simWidth,
+          simHeight,
+          matrixAscendToY(axisPos, flameAxisSimSize, upIsPositiveY),
           color,
         );
       } else {
-        setPixelAllRows(pixels, canvasWidth, canvasHeight, axisPos, color);
+        setPixelAllRows(pixels, simWidth, simHeight, axisPos, color);
       }
     };
 
@@ -966,7 +982,14 @@ const renderers = {
         plot(j, color);
       }
     }
-    return pixels;
+    if (isMatrix) {
+      return flameAxisSimSize === canvasHeight
+        ? pixels
+        : downsampleColumnHeight(pixels, canvasWidth, flameAxisSimSize, canvasHeight);
+    }
+    return flameAxisSimSize === canvasWidth
+      ? pixels
+      : downsampleRowWidth(pixels, flameAxisSimSize, canvasWidth, canvasHeight);
   },
   meteor: ({ width, height, parameters, timestamp }) => {
     // Ported from NightDriverStrip's MeteorChannel::Draw() (meteoreffect.h):
@@ -1849,11 +1872,14 @@ const FIRE_PALETTE = [
 
 // `fire`'s cooling/sparking/diffusion constants are tuned for a strip with
 // well over a hundred cells; on a canvas narrower than this, the automaton
-// barely gets going before it hits the far end, reading as a lit sliver at
-// the spark end rather than a graded flame. Below the threshold, the whole
-// simulation runs at FIRE_SUPERSAMPLE_WIDTH instead (same trick as
+// barely gets going before it hits the far end, reading as a lit sliver (or,
+// confirmed live on a real 64-tall matrix, a harsh on/off cliff instead of a
+// graded flame) rather than a graded flame. At or below the threshold, the
+// whole simulation runs at FIRE_SUPERSAMPLE_WIDTH instead (same trick as
 // downsampling any oversampled signal) and the result is box-downsampled
-// back down to the canvas's real width.
+// back down to the canvas's real width - inclusive of the threshold itself,
+// since 64 is also a common full HUB75 panel height and needs the same
+// treatment as anything narrower.
 const FIRE_SUPERSAMPLE_MIN_WIDTH = 64;
 const FIRE_SUPERSAMPLE_WIDTH = 256;
 
