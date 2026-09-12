@@ -629,10 +629,31 @@ const renderers = {
     const ballSize = Math.max(1, Math.round(Number(parameters.ballSize ?? 5)));
     const mirrored = Boolean(parameters.mirrored);
     // Only matters when `mirrored` is off (a single source): picks which end
-    // of the strip the ball bounces from. Irrelevant when mirrored, since
-    // both ends are drawn either way.
+    // of the strip the ball bounces from (non-matrix), or which side of the
+    // width each ball's own lane starts from (matrix). Irrelevant when
+    // mirrored, since both ends/lanes are drawn either way.
     const reversed = Boolean(parameters.reversed);
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+
+    // Gravity has one objectively correct direction, so on a genuine matrix
+    // (a single, non-parallel mapping taller than one row - same isMatrix
+    // test as `fire`/`classic-fire`/rocket-fireworks) balls fall and bounce
+    // vertically instead of sideways along the width, each in its own lane
+    // (column) spread evenly across the width, using the same
+    // matrixAscendToY() every other climbing/falling effect uses to pick
+    // which screen direction is actually "up". Previously this only ever
+    // wrote into row 0 of the pixel buffer regardless of height - harmless
+    // for a real 1-row strip, but it meant nothing drew at all on any other
+    // row of an actual matrix canvas.
+    const isParallel = parameters.stripCount !== undefined;
+    const isMatrix = !isParallel && height > 1;
+    const upIsPositiveY = Boolean(parameters.upIsPositiveY);
+    const bounceAxisSize = isMatrix ? height : width;
+    const laneFor = (ball) => {
+      if (ballCount <= 1) return Math.floor(width / 2);
+      const lane = Math.round((ball / (ballCount - 1)) * (width - 1));
+      return reversed ? width - 1 - lane : lane;
+    };
     // Ported directly from NightDriverStrip's BouncingBallEffect::Draw() kinematics
     // (h = v*t - 0.5*g*t^2, energy lost to `dampening` on each bounce) instead of
     // the earlier sine-decay approximation, which is what actually froze balls at
@@ -687,15 +708,26 @@ const renderers = {
         0,
         cycleVelocity * localTime - 0.5 * GRAVITY * localTime * localTime,
       );
-      const position = (heightValue * (width - 1)) / START_HEIGHT;
+      const position = (heightValue * (bounceAxisSize - 1)) / START_HEIGHT;
 
-      for (let x = 0; x < ballSize; x += 1) {
-        const primaryPosition = reversed
-          ? width - 1 - (position + x)
-          : position + x;
-        plotBlended1D(pixels, width, primaryPosition, color);
-        if (mirrored) {
-          plotBlended1D(pixels, width, width - 1 - primaryPosition, color);
+      if (isMatrix) {
+        const lane = laneFor(ball);
+        for (let x = 0; x < ballSize; x += 1) {
+          const y = matrixAscendToY(position + x, bounceAxisSize, upIsPositiveY);
+          plotBlended1DColumn(pixels, width, height, lane, y, color);
+          if (mirrored) {
+            plotBlended1DColumn(pixels, width, height, width - 1 - lane, y, color);
+          }
+        }
+      } else {
+        for (let x = 0; x < ballSize; x += 1) {
+          const primaryPosition = reversed
+            ? width - 1 - (position + x)
+            : position + x;
+          plotBlended1DAllRows(pixels, width, height, primaryPosition, color);
+          if (mirrored) {
+            plotBlended1DAllRows(pixels, width, height, width - 1 - primaryPosition, color);
+          }
         }
       }
     }
@@ -1407,31 +1439,55 @@ const renderers = {
       ? [255, 255, 255].map((channel) => Math.round(channel * (1 - msSinceBeat / 120)))
       : null;
 
+    // NightDriverStrip has this as two separate classes - VUMeterEffect
+    // (horizontal) and VUMeterVerticalEffect - unified here behind one
+    // renderer: on a genuine matrix (a single, non-parallel mapping taller
+    // than one row - same isMatrix test as `fire`/rocket-fireworks/bouncing
+    // balls), the bar grows vertically instead of across the width, the same
+    // shape drawn into every column via setPixelAllColumns (setPixelAllRows'
+    // transpose). "left" becomes the ground (bar grows up, the usual VU
+    // meter shape) and "right" becomes the ceiling (bar hangs down) via
+    // matrixAscendToY, same as every other climbing/falling effect picks
+    // "up"; "center" needs no such flip, since growing symmetrically out
+    // from the middle looks the same regardless of which physical direction
+    // is up.
+    const isParallel = parameters.stripCount !== undefined;
+    const isMatrix = !isParallel && height > 1;
+    const upIsPositiveY = Boolean(parameters.upIsPositiveY);
+    const barAxisSize = isMatrix ? height : width;
+    const plotAt = (pos, color) => {
+      if (isMatrix) setPixelAllColumns(pixels, width, height, pos, color);
+      else setPixelAllRows(pixels, width, height, pos, color);
+    };
+
     if (origin === "center") {
-      const half = Math.max(1, Math.floor(width / 2));
-      const center = Math.floor(width / 2);
+      const half = Math.max(1, Math.floor(barAxisSize / 2));
+      const center = Math.floor(barAxisSize / 2);
       const litCount = Math.round(level * half);
       for (let i = 0; i < litCount; i += 1) {
         const heat = Math.round((i / Math.max(1, half - 1)) * 255);
         const color = heatToFireColor(heat);
-        setPixelAllRows(pixels, width, height, center + i, color);
-        setPixelAllRows(pixels, width, height, center - 1 - i, color);
+        plotAt(center + i, color);
+        plotAt(center - 1 - i, color);
       }
       if (litCount > 0 && flashColor) {
-        setPixelAllRows(pixels, width, height, center + litCount - 1, flashColor);
-        setPixelAllRows(pixels, width, height, center - litCount, flashColor);
+        plotAt(center + litCount - 1, flashColor);
+        plotAt(center - litCount, flashColor);
       }
     } else {
-      const litCount = Math.round(level * width);
+      const litCount = Math.round(level * barAxisSize);
+      const groundOrigin = origin === "left";
       for (let i = 0; i < litCount; i += 1) {
-        const heat = Math.round((i / Math.max(1, width - 1)) * 255);
+        const heat = Math.round((i / Math.max(1, barAxisSize - 1)) * 255);
         const color = heatToFireColor(heat);
-        const index = origin === "left" ? i : width - 1 - i;
-        setPixelAllRows(pixels, width, height, index, color);
+        const ascendPos = groundOrigin ? i : barAxisSize - 1 - i;
+        const pos = isMatrix ? matrixAscendToY(ascendPos, barAxisSize, upIsPositiveY) : ascendPos;
+        plotAt(pos, color);
       }
       if (litCount > 0 && flashColor) {
-        const tip = origin === "left" ? litCount - 1 : width - litCount;
-        setPixelAllRows(pixels, width, height, tip, flashColor);
+        const tipAscendPos = groundOrigin ? litCount - 1 : barAxisSize - litCount;
+        const tip = isMatrix ? matrixAscendToY(tipAscendPos, barAxisSize, upIsPositiveY) : tipAscendPos;
+        plotAt(tip, flashColor);
       }
     }
     return pixels;
@@ -1469,6 +1525,12 @@ const renderers = {
       return pixels;
     }
 
+    // row is "how far up the bar has grown" (0 = baseline). Was assuming
+    // canvas row 0 is always physically the top (height-1-row) regardless of
+    // wiring - correct for HUB75, wrong for a bottom-origin serpentine
+    // matrix. matrixAscendToY() picks the right canvas row per upIsPositiveY
+    // the same way rocket-fireworks/fire/classic-fire already do.
+    const upIsPositiveY = Boolean(parameters.upIsPositiveY);
     const peakAt = (x) =>
       amplitudeToDbFraction(clamp(interpolateSeries(peaksDecayed, x, width), 0, 1));
     for (let x = 0; x < width; x += 1) {
@@ -1476,11 +1538,11 @@ const renderers = {
       const peakRow = Math.round(peakAt(x) * height) - 1;
       for (let row = 0; row < barHeight; row += 1) {
         const heat = Math.round((row / Math.max(1, height - 1)) * 255);
-        pixels[(height - 1 - row) * width + x] = heatToFireColor(heat);
+        pixels[matrixAscendToY(row, height, upIsPositiveY) * width + x] = heatToFireColor(heat);
       }
       for (const row of peakMarkerPositions(peakRow, height)) {
         if (row >= barHeight && row < height) {
-          pixels[(height - 1 - row) * width + x] = PEAK_MARKER_COLOR;
+          pixels[matrixAscendToY(row, height, upIsPositiveY) * width + x] = PEAK_MARKER_COLOR;
         }
       }
     }
