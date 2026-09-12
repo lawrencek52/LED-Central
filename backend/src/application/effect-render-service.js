@@ -719,7 +719,7 @@ const renderers = {
     const color = kelvinToRgb(kelvin);
     return Array.from({ length: width * height }, () => color);
   },
-  fire: ({ width: canvasWidth, height, parameters, timestamp }) => {
+  fire: ({ width: canvasWidth, height: canvasHeight, parameters, timestamp }) => {
     // Ported from NightDriverStrip's FireEffect::DrawFire() (fireeffect.h):
     // per-cell cooling, then heat diffused in from higher-index neighbors
     // (BlendNeighbor1=1, BlendNeighbor2=2, over BlendTotal=3), then random
@@ -736,6 +736,15 @@ const renderers = {
     // source on a long strip at low cooling), and a lateral blend pass
     // correlates neighboring rows so multiple strips read as one connected
     // fire instead of independent, uncorrelated flames.
+    //
+    // Extended again for a genuine matrix (a single, non-parallel mapping
+    // taller than one row - the same test rocket-fireworks uses for
+    // climbsVertically): the flame axis runs vertically instead of across
+    // the width, so it rises like a real fire instead of running sideways.
+    // "Lanes" (previously "rows") become the matrix's columns, each its own
+    // correlated flame; upIsPositiveY (from the canvas/mapping orientation,
+    // same convention rocket-fireworks launches against) picks which screen
+    // direction is actually up.
     const cooling = Math.max(0, Math.round(Number(parameters.cooling ?? 3)));
     const sparking = clamp(Number(parameters.sparking ?? 100), 0, 255);
     const sparks = Math.max(0, Math.round(Number(parameters.sparks ?? 3)));
@@ -746,13 +755,27 @@ const renderers = {
     const reversed = Boolean(parameters.reversed);
     const mirrored = Boolean(parameters.mirrored);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
-    // Simulate at a wider virtual width on a too-narrow canvas (see
+
+    const isParallel = parameters.stripCount !== undefined;
+    const isMatrix = !isParallel && canvasHeight > 1;
+    const upIsPositiveY = Boolean(parameters.upIsPositiveY);
+
+    // The flame axis is whichever canvas dimension the fire actually climbs
+    // along - height on a matrix, width otherwise (a strip, or the parallel
+    // per-row canvases this was originally built for). Lanes are the other
+    // dimension: independent-but-correlated flames running side by side.
+    const flameAxisCanvasSize = isMatrix ? canvasHeight : canvasWidth;
+    const laneAxisSize = isMatrix ? canvasWidth : canvasHeight;
+
+    // Simulate at a larger virtual size on a too-short flame axis (see
     // FIRE_SUPERSAMPLE_MIN_WIDTH above), downsampling back down at the end.
-    const width =
-      canvasWidth < FIRE_SUPERSAMPLE_MIN_WIDTH
+    const flameAxisSimSize =
+      flameAxisCanvasSize < FIRE_SUPERSAMPLE_MIN_WIDTH
         ? FIRE_SUPERSAMPLE_WIDTH
-        : canvasWidth;
-    const ledCount = mirrored ? Math.max(1, Math.floor(width / 2)) : width;
+        : flameAxisCanvasSize;
+    const ledCount = mirrored
+      ? Math.max(1, Math.floor(flameAxisSimSize / 2))
+      : flameAxisSimSize;
     const randomSeed = Number(parameters.randomSeed ?? 0);
     const seedSalt = 11 + randomSeed;
 
@@ -775,22 +798,23 @@ const renderers = {
       1,
       Number(parameters.heightWaveSeconds ?? 25),
     );
-    // Only matters once multiple rows (parallel strips) share this canvas.
+    // Only matters once multiple lanes (parallel strips, or matrix columns)
+    // share this canvas.
     const neighborBlend = clamp(Number(parameters.neighborBlend ?? 0.2), 0, 1);
     const falloffWidth = Math.max(3, Math.round(ledCount * 0.05));
 
-    const rows = Math.max(1, height);
+    const lanes = Math.max(1, laneAxisSize);
     const grid = simulateFireGrid({
-      rows,
+      rows: lanes,
       cellCount: ledCount,
       elapsedSeconds,
       seedSalt,
       neighborBlend,
       falloffWidth,
-      // Rows get distinct per-row randomness for cooling, diffusion and
+      // Lanes get distinct per-lane randomness for cooling, diffusion and
       // sparking, and for the height envelope's own two minor texture waves
       // (see fireHeightFraction) - only its dominant, slowest wave stays
-      // keyed off the shared seedSalt so every row breathes together on the
+      // keyed off the shared seedSalt so every lane breathes together on the
       // big cycle.
       rowStep: (h, rng) => {
         for (let i = 0; i < ledCount; i += 1) {
@@ -809,8 +833,8 @@ const renderers = {
           }
         }
       },
-      ceilingFractionForRow: (row, stepSeconds) =>
-        fireHeightFraction(stepSeconds, seedSalt, seedSalt + row * 97, {
+      ceilingFractionForRow: (lane, stepSeconds) =>
+        fireHeightFraction(stepSeconds, seedSalt, seedSalt + lane * 97, {
           min: minHeightFraction,
           averageFraction: averageHeightFraction,
           max: maxHeightFraction,
@@ -818,22 +842,48 @@ const renderers = {
         }),
     });
 
-    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-    for (let row = 0; row < rows; row += 1) {
-      const heat = grid[row];
+    // Position along the flame axis's simulated (possibly supersampled)
+    // buffer. axisPos runs from the flame's cool tip (0) to its hot,
+    // spark-fed base (flameAxisSimSize-1), which physically belongs at the
+    // ground - same "ascend progress" convention rocket-fireworks launches
+    // against: when upIsPositiveY is true, y increases toward the physical
+    // top, so the base (ascend progress 0) sits at y=0 and needs the flip;
+    // when false (HUB75's row-0-is-top convention), axisPos already reads
+    // top-to-bottom in screen order, so it maps straight through. A
+    // strip/parallel canvas has no such flip, since it doesn't climb
+    // vertically at all.
+    const flameAxisIndex = (pos) =>
+      isMatrix && upIsPositiveY ? flameAxisSimSize - 1 - pos : pos;
+
+    const simWidth = isMatrix ? laneAxisSize : flameAxisSimSize;
+    const simHeight = isMatrix ? flameAxisSimSize : laneAxisSize;
+    const pixels = Array.from({ length: simWidth * simHeight }, () => [0, 0, 0]);
+    const plot = (axisPos, lane, color) => {
+      const pos = flameAxisIndex(axisPos);
+      if (isMatrix) pixels[pos * simWidth + lane] = color;
+      else pixels[lane * simWidth + pos] = color;
+    };
+
+    for (let lane = 0; lane < lanes; lane += 1) {
+      const heat = grid[lane];
       for (let i = 0; i < ledCount; i += 1) {
         const color = heatToFireColor(heat[i]);
         const j = reversed ? ledCount - 1 - i : i;
-        pixels[row * width + j] = color;
+        plot(j, lane, color);
         if (mirrored) {
           const mirrorIndex = !reversed ? 2 * ledCount - 1 - i : ledCount + i;
-          pixels[row * width + mirrorIndex] = color;
+          plot(mirrorIndex, lane, color);
         }
       }
     }
-    return width === canvasWidth
+    if (isMatrix) {
+      return flameAxisSimSize === canvasHeight
+        ? pixels
+        : downsampleColumnHeight(pixels, canvasWidth, flameAxisSimSize, canvasHeight);
+    }
+    return flameAxisSimSize === canvasWidth
       ? pixels
-      : downsampleRowWidth(pixels, width, canvasWidth, height);
+      : downsampleRowWidth(pixels, flameAxisSimSize, canvasWidth, canvasHeight);
   },
   "classic-fire": ({ width, height, parameters, timestamp }) => {
     // Ported from NightDriverStrip's ClassicFireEffect::Fire() (fireeffect.h):
@@ -1791,6 +1841,33 @@ function downsampleRowWidth(pixels, sourceWidth, targetWidth, height) {
       }
       const count = end - start;
       result[row * targetWidth + x] = [
+        Math.round(r / count),
+        Math.round(g / count),
+        Math.round(b / count),
+      ];
+    }
+  }
+  return result;
+}
+
+// downsampleRowWidth's transpose: box-filters each column from sourceHeight
+// cells down to targetHeight. Used by fire's matrix orientation, where the
+// flame axis runs vertically instead of across the width.
+function downsampleColumnHeight(pixels, width, sourceHeight, targetHeight) {
+  const result = new Array(width * targetHeight);
+  for (let x = 0; x < width; x += 1) {
+    for (let y = 0; y < targetHeight; y += 1) {
+      const start = Math.floor((y / targetHeight) * sourceHeight);
+      const end = Math.max(start + 1, Math.floor(((y + 1) / targetHeight) * sourceHeight));
+      let r = 0, g = 0, b = 0;
+      for (let sourceY = start; sourceY < end; sourceY += 1) {
+        const color = pixels[sourceY * width + x];
+        r += color[0];
+        g += color[1];
+        b += color[2];
+      }
+      const count = end - start;
+      result[y * width + x] = [
         Math.round(r / count),
         Math.round(g / count),
         Math.round(b / count),

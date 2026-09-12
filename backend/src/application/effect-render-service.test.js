@@ -627,7 +627,12 @@ test("fire blends neighboring rows together when neighborBlend is enabled", () =
       parameters: fireParameters({ neighborBlend: { default: 1 } }),
     },
     canvas: { width, height: 3 },
-    parameters: { timeSeconds: 5 },
+    // stripCount marks this as the parallel-strips-as-rows scenario (each
+    // row its own horizontal flame, correlated sideways via neighborBlend) -
+    // without it, a non-parallel canvas taller than one row is now treated
+    // as a genuine matrix and burns vertically instead (see the fire
+    // renderer's isMatrix handling), which this test isn't exercising.
+    parameters: { timeSeconds: 5, stripCount: 3 },
   });
   const row0 = frame.pixels.slice(0, width);
   const row2 = frame.pixels.slice(2 * width, 3 * width);
