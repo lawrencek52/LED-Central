@@ -131,6 +131,18 @@ function matrixUpIsPositiveY(mapping) {
   return false;
 }
 
+// Shared by every effect that climbs/burns vertically on a matrix (rocket-
+// fireworks, fire, classic-fire, ...): converts a position along the
+// effect's own physical "ascend" axis - 0 at the ground/source end, axisSize
+// - 1 at the far end away from it - into the canvas Y coordinate that's
+// actually correct for this mapping's wiring, per upIsPositiveY (see
+// matrixUpIsPositiveY() above). Centralized so every such effect picks
+// "which way is up" the same way instead of re-deriving (and risking
+// getting backwards) its own copy of this flip.
+function matrixAscendToY(ascendPos, axisSize, upIsPositiveY) {
+  return upIsPositiveY ? ascendPos : axisSize - 1 - ascendPos;
+}
+
 function parallelCoordinates(mapping) {
   const width = mapping.width;
   const height = mapping.height || 1;
@@ -485,9 +497,7 @@ const renderers = {
         // non-climbing case's own launch-side flip, and `upIsPositiveY`
         // picks which canvas y direction "climbing" actually moves toward.
         const x = reversed ? width - 1 - point.row : point.row;
-        const y = upIsPositiveY
-          ? point.col
-          : physicsAscendLength - 1 - point.col;
+        const y = matrixAscendToY(point.col, physicsAscendLength, upIsPositiveY);
         plotBlended1DColumn(pixels, width, height, x, y, point.color);
       } else {
         const pixelRow = isParallel ? 0 : point.row;
@@ -845,15 +855,13 @@ const renderers = {
     // Position along the flame axis's simulated (possibly supersampled)
     // buffer. axisPos runs from the flame's cool tip (0) to its hot,
     // spark-fed base (flameAxisSimSize-1), which physically belongs at the
-    // ground - same "ascend progress" convention rocket-fireworks launches
-    // against: when upIsPositiveY is true, y increases toward the physical
-    // top, so the base (ascend progress 0) sits at y=0 and needs the flip;
-    // when false (HUB75's row-0-is-top convention), axisPos already reads
-    // top-to-bottom in screen order, so it maps straight through. A
-    // strip/parallel canvas has no such flip, since it doesn't climb
-    // vertically at all.
+    // ground - so its "ascend progress" (matrixAscendToY's own convention,
+    // 0 = ground) is the axis run in reverse. A strip/parallel canvas has no
+    // such flip, since it doesn't climb vertically at all.
     const flameAxisIndex = (pos) =>
-      isMatrix && upIsPositiveY ? flameAxisSimSize - 1 - pos : pos;
+      isMatrix
+        ? matrixAscendToY(flameAxisSimSize - 1 - pos, flameAxisSimSize, upIsPositiveY)
+        : pos;
 
     const simWidth = isMatrix ? laneAxisSize : flameAxisSimSize;
     const simHeight = isMatrix ? flameAxisSimSize : laneAxisSize;
@@ -885,16 +893,25 @@ const renderers = {
       ? pixels
       : downsampleRowWidth(pixels, flameAxisSimSize, canvasWidth, canvasHeight);
   },
-  "classic-fire": ({ width, height, parameters, timestamp }) => {
+  "classic-fire": ({ width: canvasWidth, height: canvasHeight, parameters, timestamp }) => {
     // Ported from NightDriverStrip's ClassicFireEffect::Fire() (fireeffect.h):
     // the classic Fire2012-style automaton, diffusing from *lower*-index
     // neighbors (opposite direction from FireEffect) with sparks igniting
     // near the low-index end, plus its own hard-banded heat-to-color ramp.
+    //
+    // On a genuine matrix (a single, non-parallel mapping taller than one
+    // row - same isMatrix test as `fire` and rocket-fireworks'
+    // climbsVertically), the flame axis runs vertically instead of across
+    // the width, so it rises like a real fire instead of running sideways.
     const cooling = Math.max(0, Math.round(Number(parameters.cooling ?? 5)));
     const reversed = Boolean(parameters.reversed);
     const mirrored = Boolean(parameters.mirrored);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
-    const ledCount = width;
+
+    const isParallel = parameters.stripCount !== undefined;
+    const isMatrix = !isParallel && canvasHeight > 1;
+    const upIsPositiveY = Boolean(parameters.upIsPositiveY);
+    const ledCount = isMatrix ? canvasHeight : canvasWidth;
     const SPARKING = 180;
     const SPARKS = 5;
 
@@ -919,16 +936,34 @@ const renderers = {
       },
     });
 
-    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+    const pixels = Array.from({ length: canvasWidth * canvasHeight }, () => [0, 0, 0]);
+    // The spark end is the *low* index here (opposite of `fire`), which
+    // physically belongs at the ground on a matrix - so axisPos is already
+    // matrixAscendToY's own "ascend progress" convention (0 = ground),
+    // unlike `fire`, which has to invert it first.
+    const plot = (axisPos, color) => {
+      if (isMatrix) {
+        setPixelAllColumns(
+          pixels,
+          canvasWidth,
+          canvasHeight,
+          matrixAscendToY(axisPos, ledCount, upIsPositiveY),
+          color,
+        );
+      } else {
+        setPixelAllRows(pixels, canvasWidth, canvasHeight, axisPos, color);
+      }
+    };
+
     for (let i = 0; i < ledCount; i += 1) {
       const color = heatToFireColor(heat[i]);
       if (mirrored) {
         const middle = Math.floor(ledCount / 2);
-        setPixelAllRows(pixels, width, height, middle - i, color);
-        setPixelAllRows(pixels, width, height, middle + i, color);
+        plot(middle - i, color);
+        plot(middle + i, color);
       } else {
         const j = reversed ? ledCount - 1 - i : i;
-        setPixelAllRows(pixels, width, height, j, color);
+        plot(j, color);
       }
     }
     return pixels;
@@ -2446,6 +2481,16 @@ function setPixelAllRows(pixels, width, height, x, color) {
   const index = ((Math.round(x) % width) + width) % width;
   for (let y = 0; y < height; y += 1) {
     pixels[y * width + index] = color;
+  }
+}
+
+// setPixelAllRows' transpose: sets an exact pixel index on every column,
+// wrapping/clamping the row into range - used by classic-fire's matrix
+// orientation, where the flame axis runs vertically instead of across rows.
+function setPixelAllColumns(pixels, width, height, y, color) {
+  const index = ((Math.round(y) % height) + height) % height;
+  for (let x = 0; x < width; x += 1) {
+    pixels[index * width + x] = color;
   }
 }
 
