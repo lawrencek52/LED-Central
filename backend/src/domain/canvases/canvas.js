@@ -17,6 +17,11 @@ export function normalizeCanvas(canvas) {
         y: mapping.y || 0,
         width: mapping.width || canvas.width,
         height: mapping.height || 1,
+        // Physical LED density (LEDs/meter), snapshotted from the controller at canvas-build
+        // time (see CanvasBuilder.jsx) - null means unknown (older firmware, or a canvas built
+        // before density detection existed), in which case density-aware effects (fire,
+        // classic-fire) fall back to today's 1:1 cell-per-LED behavior unchanged.
+        ledsPerMeter: Number(mapping.ledsPerMeter) > 0 ? Number(mapping.ledsPerMeter) : null,
         rotation: mapping.rotation || 0,
         reversed: Boolean(mapping.reversed),
         // Which corner of the mapping's rectangle physical LED 0 sits in,

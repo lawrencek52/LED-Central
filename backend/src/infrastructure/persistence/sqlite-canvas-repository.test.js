@@ -27,6 +27,7 @@ test('persists canvas mappings and revisions', () => {
       y: 0,
       width: 20,
       height: 1,
+      ledsPerMeter: null,
       rotation: 0
     }]
   });

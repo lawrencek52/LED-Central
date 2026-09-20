@@ -59,6 +59,7 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
         ...parameters,
         stripSpacingRatio: canvas.stripSpacingRatio ?? 1,
         upIsPositiveY: matrixUpIsPositiveY(canvas.mappings?.[0]),
+        ledsPerMeter: canvas.mappings?.[0]?.ledsPerMeter ?? null,
       },
       timestamp,
     });
@@ -97,6 +98,7 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
         mappingOrdinal,
         stripCount: parallelMappings.length,
         stripSpacingRatio: canvas.stripSpacingRatio ?? 1,
+        ledsPerMeter: mapping.ledsPerMeter ?? null,
       },
       timestamp,
     });
@@ -809,12 +811,9 @@ const renderers = {
     const flameAxisCanvasSize = isMatrix ? canvasHeight : canvasWidth;
     const laneAxisSize = isMatrix ? canvasWidth : canvasHeight;
 
-    // Simulate at a larger virtual size on a too-short flame axis (see
-    // FIRE_SUPERSAMPLE_MIN_WIDTH above), downsampling back down at the end.
-    const flameAxisSimSize =
-      flameAxisCanvasSize <= FIRE_SUPERSAMPLE_MIN_WIDTH
-        ? FIRE_SUPERSAMPLE_WIDTH
-        : flameAxisCanvasSize;
+    // Simulate at a larger virtual size on a too-short or too-sparse flame axis (see
+    // flameAxisSimSizeFor above), downsampling back down at the end.
+    const flameAxisSimSize = flameAxisSimSizeFor(flameAxisCanvasSize, parameters.ledsPerMeter);
     const ledCount = mirrored
       ? Math.max(1, Math.floor(flameAxisSimSize / 2))
       : flameAxisSimSize;
@@ -953,10 +952,7 @@ const renderers = {
     // typical panel's height (64 or less).
     const flameAxisCanvasSize = isMatrix ? canvasHeight : canvasWidth;
     const laneAxisSize = isMatrix ? canvasWidth : canvasHeight;
-    const flameAxisSimSize =
-      flameAxisCanvasSize <= FIRE_SUPERSAMPLE_MIN_WIDTH
-        ? FIRE_SUPERSAMPLE_WIDTH
-        : flameAxisCanvasSize;
+    const flameAxisSimSize = flameAxisSimSizeFor(flameAxisCanvasSize, parameters.ledsPerMeter);
     const ledCount = flameAxisSimSize;
     const SPARKING = 180;
     const SPARKS = 5;
@@ -1944,6 +1940,32 @@ const FIRE_PALETTE = [
 // treatment as anything narrower.
 const FIRE_SUPERSAMPLE_MIN_WIDTH = 64;
 const FIRE_SUPERSAMPLE_WIDTH = 256;
+
+// Reference density (LEDs/meter) fire's cell-scale constants (sparkHeight, cooling/diffusion
+// neighbor spread, falloffWidth, ...) are implicitly tuned against - a common WS2812 density and
+// this project's own default new-controller strip (215 LEDs over ~3.58m, see
+// controller-service.js's `215` default). A strip whose actual density is known (from
+// detectCapabilities()'s ACTIVE_LEDS_PER_METER, snapshotted onto its canvas mapping - see
+// canvas.js's normalizeCanvas) is simulated at the cell count this reference density would
+// produce for the *same physical length*, then box-resampled (downsampleRowWidth /
+// downsampleColumnHeight below) down to the strip's real LED count - so a strip with fewer,
+// sparser LEDs over the same physical run gets a sim buffer with proportionally more cells
+// instead of stretching each cell's physical size. This is a strict generalization of the
+// too-narrow-strip supersample trick above (same downstream mechanism, reused unchanged) rather
+// than a parallel code path. A strip with no known density (older firmware, or a canvas mapping
+// built before density detection existed) falls back to today's unmodified 1:1 cell-per-LED
+// behavior.
+const FIRE_REFERENCE_LEDS_PER_METER = 60;
+
+export function flameAxisSimSizeFor(flameAxisCanvasSize, ledsPerMeter) {
+  const knownDensity = Number(ledsPerMeter) > 0 ? Number(ledsPerMeter) : null;
+  const densityCorrectedSize = knownDensity
+    ? (flameAxisCanvasSize * FIRE_REFERENCE_LEDS_PER_METER) / knownDensity
+    : flameAxisCanvasSize;
+  return densityCorrectedSize <= FIRE_SUPERSAMPLE_MIN_WIDTH
+    ? FIRE_SUPERSAMPLE_WIDTH
+    : Math.max(1, Math.round(densityCorrectedSize));
+}
 
 // Box-filters each row from sourceWidth cells down to targetWidth, averaging
 // per channel so a bright one-cell spark contributes its share to the output

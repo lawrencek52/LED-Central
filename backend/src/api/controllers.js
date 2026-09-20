@@ -47,6 +47,19 @@ function validateControllerPayload(body, { partial = false } = {}) {
     }
   }
 
+  // Not in controllerFields (and so never required, never counted toward "partial update
+  // touched something") - the only writer is the detect flow, which always submits it
+  // alongside the required fields it detected together with. See gateway.detectCapabilities().
+  if (
+    payload.ledsPerMeter !== undefined &&
+    (!Array.isArray(payload.ledsPerMeter) ||
+      payload.ledsPerMeter.some(
+        (count) => !Number.isInteger(count) || count < 0 || count > 65536,
+      ))
+  ) {
+    errors.ledsPerMeter = "must contain non-negative integers (0 = unknown)";
+  }
+
   if (Object.keys(errors).length > 0) {
     const error = new Error("Invalid controller payload");
     error.statusCode = 400;
@@ -83,6 +96,9 @@ function validateControllerPayload(body, { partial = false } = {}) {
     ...(payload.ledCounts === undefined
       ? {}
       : { ledCounts: payload.ledCounts }),
+    ...(payload.ledsPerMeter === undefined
+      ? {}
+      : { ledsPerMeter: payload.ledsPerMeter }),
   };
 }
 

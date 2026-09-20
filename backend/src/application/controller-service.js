@@ -15,7 +15,14 @@ export class ControllerService {
     return this.repository.get(id);
   }
 
-  create({ name, host, port, strips = 4, ledCounts = Array(strips).fill(215) }) {
+  create({
+    name,
+    host,
+    port,
+    strips = 4,
+    ledCounts = Array(strips).fill(215),
+    ledsPerMeter = Array(strips).fill(0),
+  }) {
     const timestamp = this.now().toISOString();
     const controller = {
       id: this.idFactory(),
@@ -25,6 +32,7 @@ export class ControllerService {
       connected: false,
       strips,
       ledCounts,
+      ledsPerMeter,
       lastSeen: timestamp,
       audioAvailable: 'unknown',
       audioCheckedAt: null
@@ -46,6 +54,9 @@ export class ControllerService {
     }
     if (changes.ledCounts !== undefined) {
       updated.strips = changes.ledCounts.length;
+    }
+    if (changes.ledsPerMeter === undefined) {
+      updated.ledsPerMeter = resizeLedsPerMeter(controller.ledsPerMeter, updated.ledCounts.length);
     }
     return this.repository.save(updated);
   }
@@ -77,6 +88,10 @@ export class ControllerService {
 
 function resizeLedCounts(ledCounts = [], count) {
   return Array.from({ length: count }, (_, index) => ledCounts[index] || 215);
+}
+
+function resizeLedsPerMeter(ledsPerMeter = [], count) {
+  return Array.from({ length: count }, (_, index) => ledsPerMeter[index] || 0);
 }
 
 class MapControllerRepository {

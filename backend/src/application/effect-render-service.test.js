@@ -6,6 +6,7 @@ import {
   starfieldExitDistance,
   interpolateSeries,
   makeFireworkEvent,
+  flameAxisSimSizeFor,
 } from "./effect-render-service.js";
 
 test("renders a solid effect across the canvas", () => {
@@ -670,6 +671,90 @@ test("fire's supersampled output still matches the real canvas width", () => {
     parameters: { timeSeconds: 5 },
   });
   assert.equal(frame.pixels.length, width * 2);
+});
+
+test("flameAxisSimSizeFor gives equal-physical-length strips the same simulation resolution regardless of their own density", () => {
+  // 120 LEDs @ 30/m and 240 LEDs @ 60/m are both exactly 4m of physical strip.
+  assert.equal(flameAxisSimSizeFor(120, 30), flameAxisSimSizeFor(240, 60));
+
+  // The motivating real-world canvas (110 LEDs @ 30/m vs 215 LEDs @ 60/m,
+  // ~3.67m vs ~3.58m - close but not exactly equal, since that's what the
+  // available product lengths actually line up to) should still land within
+  // a few cells of each other, unlike the ~2x-off cell-per-physical-distance
+  // mismatch before this fix.
+  const simA = flameAxisSimSizeFor(110, 30);
+  const simB = flameAxisSimSizeFor(215, 60);
+  assert.ok(
+    Math.abs(simA - simB) <= 5,
+    `expected comparable sim sizes, got A=${simA} B=${simB}`,
+  );
+});
+
+test("flameAxisSimSizeFor is a no-op at the reference density and unaffected by an unknown density", () => {
+  assert.equal(flameAxisSimSizeFor(200, 60), 200);
+  assert.equal(flameAxisSimSizeFor(200, null), 200);
+  assert.equal(flameAxisSimSizeFor(200, 0), 200);
+  assert.equal(flameAxisSimSizeFor(200, undefined), 200);
+});
+
+test("flameAxisSimSizeFor still supersamples a strip that's physically short even at reference density", () => {
+  assert.equal(flameAxisSimSizeFor(40, 60), 256);
+});
+
+test("fire renders a sparser strip's flame at the same physical-scale texture as a denser strip of the same physical length", () => {
+  const service = new EffectRenderService();
+  // Same canvas shape as the motivating 11-strip wall: strip A is 110 LEDs @
+  // 30/m, strip B is 215 LEDs @ 60/m - both ~3.67m of physical strip.
+  const canvas = {
+    width: 215,
+    height: 2,
+    mappings: [
+      { controllerId: "c", stripIndex: 0, layout: "parallel", x: 0, y: 0, width: 110, height: 1, ledsPerMeter: 30 },
+      { controllerId: "c", stripIndex: 1, layout: "parallel", x: 0, y: 1, width: 215, height: 1, ledsPerMeter: 60 },
+    ],
+  };
+  const frame = service.render({
+    effect: {
+      renderer: "fire",
+      parameters: fireParameters({ neighborBlend: { default: 0 } }),
+    },
+    canvas,
+    parameters: { timeSeconds: 5 },
+  });
+  const litFraction = (row, width) =>
+    row.filter((pixel) => pixel[0] + pixel[1] + pixel[2] > 0).length / width;
+  const rowA = frame.pixels.slice(0, 110);
+  const rowB = frame.pixels.slice(215, 215 + 215);
+  // Without the density correction, strip A (sparser) would light a
+  // noticeably larger *fraction* of its own length than strip B, since its
+  // cells are simulated 1:1 with its LED count regardless of physical scale.
+  assert.ok(
+    Math.abs(litFraction(rowA, 110) - litFraction(rowB, 215)) < 0.15,
+    `expected comparable lit fractions, got A=${litFraction(rowA, 110)} B=${litFraction(rowB, 215)}`,
+  );
+});
+
+test("fire ignores an unknown/absent ledsPerMeter, matching today's unmodified 1:1 behavior", () => {
+  const width = 110;
+  const service = new EffectRenderService();
+  // Both mappings share the same controllerId:stripIndex (so renderCanvasEffect's per-mapping
+  // randomSeed/stripSpacingRatio/etc. are identical) and only differ in ledsPerMeter - isolating
+  // that one parameter as the sole variable under test.
+  const mappingWith = (ledsPerMeter) => [{
+    controllerId: "c", stripIndex: 0, layout: "parallel",
+    x: 0, y: 0, width, height: 1, ledsPerMeter,
+  }];
+  const render = (ledsPerMeter) =>
+    service.render({
+      effect: { renderer: "fire", parameters: fireParameters() },
+      canvas: { width, height: 1, mappings: mappingWith(ledsPerMeter) },
+      parameters: { timeSeconds: 5 },
+    });
+  const omitted = render(undefined);
+  const nullDensity = render(null);
+  const zeroDensity = render(0);
+  assert.deepEqual(omitted.pixels, nullDensity.pixels);
+  assert.deepEqual(omitted.pixels, zeroDensity.pixels);
 });
 
 test("fire rows are independent (not just duplicated) when neighborBlend is off", () => {

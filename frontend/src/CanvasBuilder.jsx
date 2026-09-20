@@ -87,6 +87,10 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
     }
     const { controller, stripIndex } = available;
     const ledCount = controller.ledCounts?.[stripIndex] || 215;
+    // Snapshotted at build time, same as ledCount - a canvas mapping never re-queries its
+    // controller afterward, so a controller's density detected later won't retroactively affect
+    // a canvas built before that detect. null means unknown (see canvas.js's normalizeCanvas).
+    const ledsPerMeter = controller.ledsPerMeter?.[stripIndex] || null;
 
     if (draft.mode === "matrix") {
       const width = Number(draft.width) || 16;
@@ -100,6 +104,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
         y: 0,
         width,
         height,
+        ledsPerMeter,
         ...(wiring === "serpentine" && {
           originCorner: draft.originCorner || "top-left",
           axis: draft.axis || "horizontal",
@@ -120,6 +125,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
       y: draft.mode === "parallel" ? draft.mappings.length : 0,
       width: ledCount,
       height: 1,
+      ledsPerMeter,
       reversed: false,
     };
     setDraft({

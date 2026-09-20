@@ -379,12 +379,19 @@ export class TcpControllerGateway {
       stats.ACTIVE_STRIP_LENGTHS.length > 0
         ? stats.ACTIVE_STRIP_LENGTHS.map(Number)
         : [Number(stats.ACTIVE_NUM_LEDS) || 0];
+    // Older firmware doesn't report this stat at all - every strip gets 0 ("unknown density"),
+    // which every downstream consumer (canvas mapping snapshot, effect-render-service) already
+    // treats as "no physical-scale correction, today's behavior".
+    const ledsPerMeter = Array.isArray(stats.ACTIVE_LEDS_PER_METER)
+      ? ledCounts.map((_, index) => Number(stats.ACTIVE_LEDS_PER_METER[index]) || 0)
+      : ledCounts.map(() => 0);
 
     return {
       driver: stats.ACTIVE_OUTPUT_DRIVER ?? null,
       layout: stats.ACTIVE_LAYOUT ?? null,
       numChannels: Number(stats.ACTIVE_NUM_CHANNELS) || ledCounts.length,
       ledCounts,
+      ledsPerMeter,
       matrixWidth:
         stats.ACTIVE_MATRIX_WIDTH != null
           ? Number(stats.ACTIVE_MATRIX_WIDTH)

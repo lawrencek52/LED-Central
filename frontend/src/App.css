@@ -784,6 +784,11 @@ h3 {
   color: var(--cyan);
   letter-spacing: 0.04em;
 }
+.detected-density {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: normal;
+}
 .hub75-note {
   margin: 2px 0;
   padding: 14px;

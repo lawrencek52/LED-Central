@@ -151,6 +151,7 @@ function App() {
           ...form,
           strips: "1",
           ledCounts: [String(capabilities.ledCounts[0] || 0)],
+          ledsPerMeter: [Number(capabilities.ledsPerMeter?.[0]) || 0],
         });
       } else {
         setForm({
@@ -159,6 +160,15 @@ function App() {
           ledCounts: Array.from(
             { length: capabilities.numChannels },
             (_, index) => String(capabilities.ledCounts[index] || 215),
+          ),
+          // Physical LED density, per strip - detected only, never a manual form field (see the
+          // strip-count/LED-count inputs below, which have no density counterpart). Carried
+          // through handleSubmit's `...form` spread untouched; editController/changeStripCount
+          // deliberately never set this, so a controller's previously-detected density survives
+          // any manual edit that isn't a fresh detect.
+          ledsPerMeter: Array.from(
+            { length: capabilities.numChannels },
+            (_, index) => Number(capabilities.ledsPerMeter?.[index]) || 0,
           ),
         });
       }
@@ -535,6 +545,14 @@ function App() {
                     {form.ledCounts.map((count, index) => (
                       <label key={index}>
                         Strip {index + 1}
+                        {form.ledsPerMeter?.[index] ? (
+                          // Detected-only, read-only - see detectDevice(); there is no input for
+                          // this, deliberately.
+                          <span className="detected-density">
+                            {" "}
+                            ({form.ledsPerMeter[index]}/m detected)
+                          </span>
+                        ) : null}
                         <input
                           required
                           type="number"
