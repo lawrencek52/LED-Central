@@ -110,6 +110,10 @@ function App() {
       port: String(controller.port),
       strips: String(controller.strips),
       ledCounts,
+      // Seeded from the persisted record so an already-detected density shows
+      // immediately, without needing to hit "Detect from device" again just to
+      // see what's already saved.
+      ledsPerMeter: controller.ledsPerMeter,
     });
   }
 
@@ -122,6 +126,13 @@ function App() {
         { length: count },
         (_, index) => form.ledCounts[index] || "215",
       ),
+      // Kept in step with ledCounts's own resize (a new slot's density is
+      // unknown until detected) so a strip-count change never leaves this
+      // array a different length than ledCounts - see ControllerService.update,
+      // which otherwise trusts a submitted ledsPerMeter as-is with no resize.
+      ledsPerMeter: form.ledsPerMeter
+        ? Array.from({ length: count }, (_, index) => form.ledsPerMeter[index] || 0)
+        : form.ledsPerMeter,
     });
   }
 
