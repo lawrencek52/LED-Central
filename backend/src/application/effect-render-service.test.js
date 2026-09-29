@@ -7,6 +7,9 @@ import {
   interpolateSeries,
   makeFireworkEvent,
   flameAxisSimSizeFor,
+  densityScaledSize,
+  densityScaledMagnitude,
+  densityScaledPerCell,
 } from "./effect-render-service.js";
 
 test("renders a solid effect across the canvas", () => {
@@ -701,6 +704,34 @@ test("flameAxisSimSizeFor still supersamples a strip that's physically short eve
   assert.equal(flameAxisSimSizeFor(40, 60), 256);
 });
 
+test("densityScaledSize converts a reference-density cell count to a physically-equivalent one at another density, and is a no-op when density is unknown", () => {
+  // Half the reference density (60 -> 30) needs half as many cells to cover
+  // the same physical size.
+  assert.equal(densityScaledSize(10, 30), 5);
+  assert.equal(densityScaledSize(10, 60), 10);
+  assert.equal(densityScaledSize(10, 120), 20);
+  assert.equal(densityScaledSize(10, null), 10);
+  assert.equal(densityScaledSize(10, 0), 10);
+  assert.equal(densityScaledSize(10, undefined), 10);
+  // Never rounds down to 0 by default; a min override is honored.
+  assert.equal(densityScaledSize(1, 1), 1);
+  assert.equal(densityScaledSize(1, 1, { min: 0 }), 0);
+});
+
+test("densityScaledMagnitude scales a continuous speed the same direction as densityScaledSize, without rounding", () => {
+  assert.equal(densityScaledMagnitude(10, 30), 5);
+  assert.equal(densityScaledMagnitude(10, 60), 10);
+  assert.equal(densityScaledMagnitude(9, 30), 4.5);
+  assert.equal(densityScaledMagnitude(10, null), 10);
+});
+
+test("densityScaledPerCell scales the opposite direction - a sparser strip needs more change per cell to hold the same change per meter", () => {
+  assert.equal(densityScaledPerCell(14, 30), 28);
+  assert.equal(densityScaledPerCell(14, 60), 14);
+  assert.equal(densityScaledPerCell(14, 120), 7);
+  assert.equal(densityScaledPerCell(14, null), 14);
+});
+
 test("fire renders a sparser strip's flame at the same physical-scale texture as a denser strip of the same physical length", () => {
   const service = new EffectRenderService();
   // Same canvas shape as the motivating 11-strip wall: strip A is 110 LEDs @
@@ -803,6 +834,119 @@ test("musical-fire renders valid pixels with and without a recent beat", () => {
     assert.equal(frame.pixels.length, 20);
     assert.ok(frame.pixels.every((pixel) => Array.isArray(pixel) && pixel.length === 3));
   }
+});
+
+test("meteor scales speed, meteorSize, and trailLength with a strip's known density, matching the reference density unchanged", () => {
+  const service = new EffectRenderService();
+  const effect = {
+    renderer: "meteor",
+    parameters: {
+      meteorCount: { default: 1 },
+      meteorSize: { default: 4 },
+      decay: { default: 3 },
+      minSpeed: { default: 0.2 },
+      maxSpeed: { default: 0.2 },
+    },
+  };
+  // ledsPerMeter only reaches the renderer via a canvas mapping - a bare
+  // {width, height} canvas (no mappings) always resolves it to null
+  // (renderCanvasEffect's own no-mappings branch), so it has to be set this
+  // way, not as a top-level render `parameters.ledsPerMeter`.
+  const render = (ledsPerMeter) =>
+    service.render({
+      effect,
+      canvas: {
+        width: 110,
+        height: 1,
+        mappings: [{ controllerId: "c", stripIndex: 0, width: 110, height: 1, ledsPerMeter }],
+      },
+      parameters: { timeSeconds: 1.5, randomSeed: 1 },
+      timestamp: 1500,
+    });
+  const omitted = render(undefined);
+  const referenceDensity = render(60);
+  const halfDensity = render(30);
+  // 60 LEDs/meter is the reference density this and every other effect's
+  // absolute constants are tuned against, so it must render identically to
+  // omitting density entirely (today's unmodified behavior).
+  assert.deepEqual(omitted.pixels, referenceDensity.pixels);
+  // A strip with a genuinely different known density (half as many LEDs per
+  // physical meter) must render differently - proof the speed/size constants
+  // are actually being read and converted, not silently ignored.
+  assert.notDeepEqual(referenceDensity.pixels, halfDensity.pixels);
+});
+
+test("rocket-fireworks derives ledSpacingCm from a strip's known density, overriding the ledSpacingCm parameter", () => {
+  const service = new EffectRenderService();
+  const effect = {
+    renderer: "rocket-fireworks",
+    parameters: { ledSpacingCm: { default: 1.667 } },
+  };
+  const render = (ledsPerMeter) =>
+    service.render({
+      effect,
+      canvas: {
+        width: 110,
+        height: 1,
+        mappings: [{ controllerId: "c", stripIndex: 0, width: 110, height: 1, ledsPerMeter }],
+      },
+      parameters: { timeSeconds: 1, showSeed: 1 },
+      timestamp: 1000,
+    });
+  const omitted = render(undefined);
+  // 1.667cm spacing is ~60 LEDs/meter (100/1.667), the same default the
+  // ledSpacingCm parameter already had - known density at that same value
+  // must reproduce the parameter-driven behavior exactly.
+  const referenceDensity = render(60);
+  // A genuinely different known density (half as dense) must change the
+  // physical spacing used, and therefore the rendered ascent/burst - proof
+  // ledsPerMeter is actually overriding the parameter, not being ignored.
+  const halfDensity = render(30);
+  assert.deepEqual(omitted.pixels, referenceDensity.pixels);
+  assert.notDeepEqual(referenceDensity.pixels, halfDensity.pixels);
+});
+
+test("musical-fire applies the same flameAxisSimSizeFor density correction as fire, matching the reference density unchanged", () => {
+  // Same automaton as `fire`, so it needs the same density correction -
+  // regression test for the bug where it was still computing ledCount
+  // directly from `width` with no correction (and no narrow-strip
+  // supersampling) at all. musical-fire has no height-envelope ceiling the
+  // way `fire` does, so its lit-fraction is noisier run-to-run than fire's -
+  // asserted here the same deterministic way meteor/rocket-fireworks are
+  // (identical at the reference density, different at another density)
+  // rather than by comparing two different strips' lit fractions.
+  const service = new EffectRenderService();
+  const effect = {
+    renderer: "musical-fire",
+    parameters: {
+      cooling: { default: 3 },
+      sparking: { default: 100 },
+      sparks: { default: 3 },
+      sparkHeight: { default: 4 },
+      beatSparkBoost: { default: 60 },
+      mirrored: { default: false },
+    },
+  };
+  const render = (ledsPerMeter) =>
+    service.render({
+      effect,
+      canvas: {
+        width: 110,
+        height: 1,
+        mappings: [{ controllerId: "c", stripIndex: 0, width: 110, height: 1, ledsPerMeter }],
+      },
+      parameters: {
+        timeSeconds: 5,
+        randomSeed: 1,
+        audio: { vu: 0, lastBeatAt: null },
+      },
+      timestamp: 5000,
+    });
+  const omitted = render(undefined);
+  const referenceDensity = render(60);
+  const halfDensity = render(30);
+  assert.deepEqual(omitted.pixels, referenceDensity.pixels);
+  assert.notDeepEqual(referenceDensity.pixels, halfDensity.pixels);
 });
 
 function assertValidRgb(pixel) {

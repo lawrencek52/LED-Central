@@ -220,7 +220,10 @@ const renderers = {
   wave: ({ width, height, parameters, timestamp }) => {
     const color = parseColor(parameters.color);
     const speed = Number(parameters.speed) || 0;
-    const waveWidth = Math.max(1, Number(parameters.width) || 1);
+    const waveWidth = Math.max(
+      1,
+      densityScaledMagnitude(Number(parameters.width) || 1, parameters.ledsPerMeter),
+    );
     const phaseOffset = (timestamp / 1000) * speed;
     return Array.from({ length: width * height }, (_, index) => {
       const x = index % width;
@@ -246,10 +249,19 @@ const renderers = {
   "palette-scroll": ({ width, height, parameters, timestamp }) => {
     const palette = normalizePalette(parameters.palette);
     const density = Math.max(0.1, Number(parameters.density ?? 1));
-    const scrollSpeed = Number(parameters.ledScrollSpeed ?? 0);
+    const scrollSpeed = densityScaledMagnitude(
+      Number(parameters.ledScrollSpeed ?? 0),
+      parameters.ledsPerMeter,
+    );
     const colorRate = Number(parameters.ledColorPerSecond ?? 0);
-    const everyNthDot = Math.max(1, Number(parameters.everyNthDot ?? 1));
-    const dotSize = Math.max(1, Number(parameters.dotSize ?? 1));
+    const everyNthDot = densityScaledSize(
+      Math.max(1, Number(parameters.everyNthDot ?? 1)),
+      parameters.ledsPerMeter,
+    );
+    const dotSize = densityScaledSize(
+      Math.max(1, Number(parameters.dotSize ?? 1)),
+      parameters.ledsPerMeter,
+    );
     const mirrored = Boolean(parameters.mirrored);
     const totalPixels = width * height;
     const pixels = Array.from({ length: totalPixels }, () => [0, 0, 0]);
@@ -403,7 +415,20 @@ const renderers = {
       0.5,
       Number(parameters.launchIntervalSeconds ?? 3),
     );
-    const ledSpacingCm = Math.max(0.1, Number(parameters.ledSpacingCm ?? 1.667));
+    // A strip's own known density always wins over the ledSpacingCm parameter
+    // (same "known density overrides the reference default" precedence fire
+    // uses) - otherwise one canvas-wide ledSpacingCm can only be physically
+    // correct for one strip type on a mixed-density canvas like Deck11 (60 vs
+    // 30 LEDs/meter), since renderCanvasEffect dispatches this per mapping
+    // with that mapping's own ledsPerMeter. Falls back to the parameter
+    // (itself defaulting to 1.667cm, ~60 LEDs/meter) only when density is
+    // unknown for this strip.
+    const ledSpacingCm = Math.max(
+      0.1,
+      Number(parameters.ledsPerMeter) > 0
+        ? 100 / Number(parameters.ledsPerMeter)
+        : Number(parameters.ledSpacingCm ?? 1.667),
+    );
     // renderCanvasEffect injects this from the canvas definition (default 1,
     // i.e. a regular matrix where strips are as far apart as LEDs).
     const stripSpacingRatio = Math.max(0.01, Number(parameters.stripSpacingRatio ?? 1));
@@ -511,10 +536,13 @@ const renderers = {
   },
   "fireworks-legacy": ({ width, height, parameters, timestamp }) => {
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-    const maxSpeed = Number(parameters.maxSpeed ?? 175);
-    const particleSize = Math.max(
-      1,
-      Math.round(Number(parameters.particleSize ?? 1)),
+    const maxSpeed = densityScaledMagnitude(
+      Number(parameters.maxSpeed ?? 175),
+      parameters.ledsPerMeter,
+    );
+    const particleSize = densityScaledSize(
+      Math.max(1, Math.round(Number(parameters.particleSize ?? 1))),
+      parameters.ledsPerMeter,
     );
     const newParticleProbability = Math.max(
       0.1,
@@ -628,7 +656,10 @@ const renderers = {
       1,
       Math.round(Number(parameters.ballCount ?? 3)),
     );
-    const ballSize = Math.max(1, Math.round(Number(parameters.ballSize ?? 5)));
+    const ballSize = densityScaledSize(
+      Math.max(1, Math.round(Number(parameters.ballSize ?? 5))),
+      parameters.ledsPerMeter,
+    );
     const mirrored = Boolean(parameters.mirrored);
     // Only matters when `mirrored` is off (a single source): picks which end
     // of the strip the ball bounces from (non-matrix), or which side of the
@@ -1030,20 +1061,32 @@ const renderers = {
       1,
       Math.round(Number(parameters.meteorCount ?? 4)),
     );
-    const meteorSize = Math.max(
-      1,
-      Math.round(Number(parameters.meteorSize ?? 4)),
+    const meteorSize = densityScaledSize(
+      Math.max(1, Math.round(Number(parameters.meteorSize ?? 4))),
+      parameters.ledsPerMeter,
     );
     const decay = clamp(Number(parameters.decay ?? 3), 1, 255);
-    const minSpeed = Math.max(0.01, Number(parameters.minSpeed ?? 0.2));
-    const maxSpeed = Math.max(minSpeed, Number(parameters.maxSpeed ?? 0.2));
+    const minSpeed = densityScaledMagnitude(
+      Math.max(0.01, Number(parameters.minSpeed ?? 0.2)),
+      parameters.ledsPerMeter,
+    );
+    const maxSpeed = Math.max(
+      minSpeed,
+      densityScaledMagnitude(
+        Number(parameters.maxSpeed ?? 0.2),
+        parameters.ledsPerMeter,
+      ),
+    );
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
     const minPos = meteorSize - 1;
     const maxPos = width - 1;
     const range = Math.max(0.001, maxPos - minPos);
     const period = 2 * range;
-    const trailLength = Math.max(meteorSize, Math.round((255 / decay) * 2));
+    const trailLength = Math.max(
+      meteorSize,
+      densityScaledSize(Math.round((255 / decay) * 2), parameters.ledsPerMeter),
+    );
     const isRedPair = meteorCount === 2;
 
     const positionAt = (m, t, speed, phase0, direction) => {
@@ -1095,20 +1138,27 @@ const renderers = {
     return pixels;
   },
   "simple-rainbow": ({ width, height, parameters, timestamp }) => {
-    const everyNth = Math.max(1, Number(parameters.everyNth ?? 12));
+    const everyNth = densityScaledSize(
+      Math.max(1, Number(parameters.everyNth ?? 12)),
+      parameters.ledsPerMeter,
+    );
     const speedDivisor = Math.max(1, Number(parameters.speedDivisor ?? 8));
     const seconds = timestamp / 1000;
     const hueBase = (seconds * (255 / speedDivisor)) % 256;
+    const huePerCell = densityScaledPerCell(4, parameters.ledsPerMeter);
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     for (let index = 0; index < width * height; index += 1) {
       if (index % everyNth !== 0) continue;
-      pixels[index] = hsvToRgb(hueBase + index * 4, 255, 255);
+      pixels[index] = hsvToRgb(hueBase + index * huePerCell, 255, 255);
     }
     return pixels;
   },
   "rainbow-twinkle": ({ width, height, parameters, timestamp }) => {
     const speedDivisor = Math.max(1, Number(parameters.speedDivisor ?? 12));
-    const deltaHue = Number(parameters.deltaHue ?? 14);
+    const deltaHue = densityScaledPerCell(
+      Number(parameters.deltaHue ?? 14),
+      parameters.ledsPerMeter,
+    );
     const seconds = timestamp / 1000;
     const hueBase = (seconds * (255 / speedDivisor)) % 256;
     const totalPixels = width * height;
@@ -1127,7 +1177,10 @@ const renderers = {
   },
   rainbowfill: ({ width, height, parameters, timestamp }) => {
     const speedDivisor = Math.max(1, Number(parameters.speedDivisor ?? 12));
-    const deltaHue = Number(parameters.deltaHue ?? 14);
+    const deltaHue = densityScaledPerCell(
+      Number(parameters.deltaHue ?? 14),
+      parameters.ledsPerMeter,
+    );
     const mirrored = Boolean(parameters.mirrored);
     const seconds = timestamp / 1000;
     const hueBase = (seconds * (255 / speedDivisor)) % 256;
@@ -1142,7 +1195,10 @@ const renderers = {
   },
   "color-fill": ({ width, height, parameters }) => {
     const color = parseColor(parameters.color ?? "#f6c8a0");
-    const everyNth = Math.max(1, Number(parameters.everyNth ?? 10));
+    const everyNth = densityScaledSize(
+      Math.max(1, Number(parameters.everyNth ?? 10)),
+      parameters.ledsPerMeter,
+    );
     return Array.from({ length: width * height }, (_, index) =>
       index % everyNth === 0 ? color : [0, 0, 0],
     );
@@ -1177,7 +1233,14 @@ const renderers = {
     // time used to vary with width.
     const transitSeconds = clamp(Number(parameters.transitSeconds ?? 3), 1, 30);
     const eyeCount = clamp(Math.round(Number(parameters.eyeCount ?? 2)), 1, 6);
-    const eyeSize = clamp(Math.round(Number(parameters.eyeSize ?? 1)), 1, 10);
+    const eyeSize = clamp(
+      densityScaledSize(
+        Math.round(Number(parameters.eyeSize ?? 1)),
+        parameters.ledsPerMeter,
+      ),
+      1,
+      10,
+    );
     const colors = normalizePalette(parameters.eyeColors);
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const span = Math.max(1, width - 1);
@@ -1210,8 +1273,14 @@ const renderers = {
     return pixels;
   },
   snake: ({ width, height, parameters, timestamp }) => {
-    const snakeSize = Math.max(1, Number(parameters.snakeSize ?? 3));
-    const speed = Math.max(0.5, Number(parameters.speed ?? 4));
+    const snakeSize = densityScaledSize(
+      Math.max(1, Number(parameters.snakeSize ?? 3)),
+      parameters.ledsPerMeter,
+    );
+    const speed = densityScaledMagnitude(
+      Math.max(0.5, Number(parameters.speed ?? 4)),
+      parameters.ledsPerMeter,
+    );
     const totalPixels = width * height;
     const pixels = Array.from({ length: totalPixels }, () => [0, 0, 0]);
     const seconds = timestamp / 1000;
@@ -1306,8 +1375,14 @@ const renderers = {
     // row or column and clamps at that axis's own edge instead.
     const isMatrix = height > 1;
     const probability = Math.max(0.01, Number(parameters.probability ?? 1));
-    const starSize = Math.max(1, Math.round(Number(parameters.starSize ?? 1)));
-    const maxSpeed = Number(parameters.maxSpeed ?? 2);
+    const starSize = densityScaledSize(
+      Math.max(1, Math.round(Number(parameters.starSize ?? 1))),
+      parameters.ledsPerMeter,
+    );
+    const maxSpeed = densityScaledMagnitude(
+      Number(parameters.maxSpeed ?? 2),
+      parameters.ledsPerMeter,
+    );
     const rainbow = Boolean(parameters.rainbow);
     const palette = rainbow
       ? null
@@ -1393,9 +1468,19 @@ const renderers = {
     const palette = normalizePalette(parameters.palette);
     const density = Math.max(0.1, Number(parameters.density ?? 1));
     const speed = Number(parameters.speed ?? 1);
-    const ledsPerSecond = Number(parameters.ledsPerSecond ?? 0);
-    const lightSize = Math.max(1, Number(parameters.lightSize ?? 1));
-    const gapSize = Math.max(0, Number(parameters.gapSize ?? 1));
+    const ledsPerSecond = densityScaledMagnitude(
+      Number(parameters.ledsPerSecond ?? 0),
+      parameters.ledsPerMeter,
+    );
+    const lightSize = densityScaledSize(
+      Math.max(1, Number(parameters.lightSize ?? 1)),
+      parameters.ledsPerMeter,
+    );
+    const gapSize = densityScaledSize(
+      Math.max(0, Number(parameters.gapSize ?? 1)),
+      parameters.ledsPerMeter,
+      { min: 0 },
+    );
     const totalPixels = width * height;
     const pixels = Array.from({ length: totalPixels }, () => [0, 0, 0]);
     const seconds = timestamp / 1000;
@@ -1567,7 +1652,14 @@ const renderers = {
     const mirrored = Boolean(parameters.mirrored);
     const elapsedSeconds = Number(parameters.timeSeconds ?? 0);
     const startedAtMs = timestamp - elapsedSeconds * 1000;
-    const ledCount = mirrored ? Math.max(1, Math.floor(width / 2)) : width;
+    // Same too-short/too-sparse simulation-buffer correction `fire` uses (see
+    // flameAxisSimSizeFor) - this is the same cellular automaton, just 1D
+    // (no lanes/matrix concept), so it's tuned against the same reference
+    // strip and needs the same fix.
+    const flameAxisSimSize = flameAxisSimSizeFor(width, parameters.ledsPerMeter);
+    const ledCount = mirrored
+      ? Math.max(1, Math.floor(flameAxisSimSize / 2))
+      : flameAxisSimSize;
     const audio = parameters.audio;
     const lastBeatAt = audio?.lastBeatAt;
     const vu = clamp(Number(audio?.vu ?? 0), 0, 1);
@@ -1601,17 +1693,22 @@ const renderers = {
       },
     });
 
-    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+    const simPixels = Array.from(
+      { length: flameAxisSimSize * height },
+      () => [0, 0, 0],
+    );
     for (let i = 0; i < ledCount; i += 1) {
       const color = heatToFireColor(heat[i]);
       const j = reversed ? ledCount - 1 - i : i;
-      setPixelAllRows(pixels, width, height, j, color);
+      setPixelAllRows(simPixels, flameAxisSimSize, height, j, color);
       if (mirrored) {
         const mirrorIndex = !reversed ? 2 * ledCount - 1 - i : ledCount + i;
-        setPixelAllRows(pixels, width, height, mirrorIndex, color);
+        setPixelAllRows(simPixels, flameAxisSimSize, height, mirrorIndex, color);
       }
     }
-    return pixels;
+    return flameAxisSimSize === width
+      ? simPixels
+      : downsampleRowWidth(simPixels, flameAxisSimSize, width, height);
   },
   // New effect: one group of frequency bands per parallel-mapped strip -
   // assign several `layout: 'parallel'` strips to this effect to build a
@@ -1671,6 +1768,18 @@ const renderers = {
 
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
     const neighborBlend = clamp(Number(parameters.neighborBlend ?? 0.2), 0, 1);
+    // Same simulation-buffer density correction `fire`/`musical-fire` use
+    // (see flameAxisSimSizeFor) - this is the same automaton. On a
+    // mixed-density canvas like Deck11 (60 vs 30 LEDs/meter strips), two
+    // different strip types now key/compute genuinely separate grids below
+    // instead of both keying off raw `width` (which the memo below already
+    // has to key on regardless, since different-width strips could never
+    // have shared one grid anyway - simulateFireGrid's rows all share one
+    // cellCount). Density correction can only make same-density strips'
+    // grids agree with each other more often, never less, so this doesn't
+    // regress the "every call recomputes the shared grid" cost this effect
+    // already accepts (see the comment above simulateFireGrid below).
+    const flameAxisSimSize = flameAxisSimSizeFor(width, parameters.ledsPerMeter);
     const cooling = 3;
     const sparking = 100;
     const sparks = 3;
@@ -1693,11 +1802,11 @@ const renderers = {
     // one (stripCount, width, elapsedSeconds, neighborBlend) combination is
     // in flight at a time within one render tick.
     const grid = memoizedFireGrid(
-      `${stripCount}:${width}:${elapsedSeconds}:${neighborBlend}`,
+      `${stripCount}:${flameAxisSimSize}:${elapsedSeconds}:${neighborBlend}`,
       () =>
         simulateFireGrid({
           rows: stripCount,
-          cellCount: width,
+          cellCount: flameAxisSimSize,
           elapsedSeconds,
           // A fixed salt, deliberately *not* the per-mapping
           // `parameters.randomSeed` renderCanvasEffect assigns each strip
@@ -1709,7 +1818,7 @@ const renderers = {
           seedSalt: 47,
           neighborBlend,
           rowStep: (h, rng) => {
-            for (let i = 0; i < width; i += 1) {
+            for (let i = 0; i < flameAxisSimSize; i += 1) {
               const coolAmount = Math.floor(rng() * cooling);
               h[i] = Math.max(0, h[i] - coolAmount);
             }
@@ -1723,14 +1832,14 @@ const renderers = {
             // across the row within a single 20ms step - saturating to
             // near-255 everywhere and rendering solid white instead of a
             // graded flame.
-            for (let i = width - 1; i >= 0; i -= 1) {
-              const a = h[(i - 1 + width) % width];
-              const b = h[(i - 2 + width) % width];
+            for (let i = flameAxisSimSize - 1; i >= 0; i -= 1) {
+              const a = h[(i - 1 + flameAxisSimSize) % flameAxisSimSize];
+              const b = h[(i - 2 + flameAxisSimSize) % flameAxisSimSize];
               h[i] = Math.min(255, Math.floor((a + b * 2) / 3));
             }
             for (let s = 0; s < sparks; s += 1) {
               if (rng() * 255 < sparking) {
-                const y = width - 1 - Math.floor(rng() * sparkHeight);
+                const y = flameAxisSimSize - 1 - Math.floor(rng() * sparkHeight);
                 if (y >= 0) h[y] = Math.min(255, Math.floor(rng() * 56) + 200);
               }
             }
@@ -1738,12 +1847,25 @@ const renderers = {
         }),
     );
     const heat = grid[myRow];
-    const litCount = Math.round(levelForRow(myRow) * width);
+    const litCount = Math.round(levelForRow(myRow) * flameAxisSimSize);
 
-    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+    const simPixels = Array.from(
+      { length: flameAxisSimSize * height },
+      () => [0, 0, 0],
+    );
     for (let i = 0; i < litCount; i += 1) {
-      setPixelAllRows(pixels, width, height, i, heatToFireColor(heat[i]));
+      setPixelAllRows(simPixels, flameAxisSimSize, height, i, heatToFireColor(heat[i]));
     }
+    const pixels =
+      flameAxisSimSize === width
+        ? simPixels
+        : downsampleRowWidth(simPixels, flameAxisSimSize, width, height);
+
+    // Plotted onto the real (post-downsample) width, not the sim buffer -
+    // it's a sharp 1-2px indicator, not a graded fire, so box-downsampling
+    // it alongside the level bar would dilute it toward black instead of
+    // leaving it a solid marker (most of a downsample bucket's source cells
+    // wouldn't be the marker itself).
     const peakPixel = Math.round(peak * width) - 1;
     for (const index of peakMarkerPositions(peakPixel, width)) {
       setPixelAllRows(pixels, width, height, index, PEAK_MARKER_COLOR);
@@ -1967,6 +2089,40 @@ export function flameAxisSimSizeFor(flameAxisCanvasSize, ledsPerMeter) {
     : Math.max(1, Math.round(densityCorrectedSize));
 }
 
+// Every other effect below with an absolute LED-count or LEDs/second constant
+// (a size, a spacing, a speed) is tuned the same way fire's cooling/sparking
+// constants are: against this project's own default new-controller strip
+// (~60 LEDs/meter, see FIRE_REFERENCE_LEDS_PER_METER above). A strip with a
+// different known density needs that constant converted so it represents the
+// same physical size/speed, not the same cell count - these three helpers do
+// that conversion (falling back to the constant unchanged, today's behavior,
+// when density is unknown) for the three shapes such a constant comes in.
+export function densityScaledSize(referenceCellCount, ledsPerMeter, { min = 1 } = {}) {
+  const knownDensity = Number(ledsPerMeter) > 0 ? Number(ledsPerMeter) : null;
+  if (!knownDensity) return referenceCellCount;
+  return Math.max(
+    min,
+    Math.round(referenceCellCount * (knownDensity / FIRE_REFERENCE_LEDS_PER_METER)),
+  );
+}
+
+// Same conversion, unrounded - for a continuous magnitude (a speed in
+// cells/second) where snapping to an integer would be wrong.
+export function densityScaledMagnitude(referenceMagnitude, ledsPerMeter) {
+  const knownDensity = Number(ledsPerMeter) > 0 ? Number(ledsPerMeter) : null;
+  if (!knownDensity) return referenceMagnitude;
+  return referenceMagnitude * (knownDensity / FIRE_REFERENCE_LEDS_PER_METER);
+}
+
+// Inverse of the above two - for a constant expressed "per cell" (e.g.
+// degrees of hue shift per LED), where the goal is to hold the total change
+// per physical meter constant rather than the change per cell.
+export function densityScaledPerCell(referencePerCell, ledsPerMeter) {
+  const knownDensity = Number(ledsPerMeter) > 0 ? Number(ledsPerMeter) : null;
+  if (!knownDensity) return referencePerCell;
+  return referencePerCell * (FIRE_REFERENCE_LEDS_PER_METER / knownDensity);
+}
+
 // Box-filters each row from sourceWidth cells down to targetWidth, averaging
 // per channel so a bright one-cell spark contributes its share to the output
 // cell it lands in rather than being skipped (as nearest-neighbor sampling
@@ -2180,7 +2336,10 @@ function saturatedColor(rng) {
 
 function renderNdsCppFireworks({ width, height, parameters, timestamp }) {
   const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
-  const maxSpeed = Number(parameters.maxSpeed ?? 175);
+  const maxSpeed = densityScaledMagnitude(
+    Number(parameters.maxSpeed ?? 175),
+    parameters.ledsPerMeter,
+  );
   const probability = Math.max(
     0,
     Number(parameters.newParticleProbability ?? 1),
