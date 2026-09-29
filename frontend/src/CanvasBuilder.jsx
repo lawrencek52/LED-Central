@@ -563,7 +563,22 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                   className="strip-mapping"
                   key={`${mapping.controllerId}-${mapping.stripIndex}-${index}`}
                 >
-                  <strong>Strip {index + 1}</strong>
+                  <strong>
+                    Strip {index + 1}
+                    {controller?.ledsPerMeter?.[mapping.stripIndex] ? (
+                      // Read live from the controller, not mapping.ledsPerMeter -
+                      // the render pipeline re-resolves density from the
+                      // controller at playback time too (see withLiveDensity in
+                      // playback-service.js), so this always shows what
+                      // fire/classic-fire will actually use, not a stale snapshot.
+                      <span className="detected-density">
+                        {" "}
+                        ({controller.ledsPerMeter[mapping.stripIndex]}/m)
+                      </span>
+                    ) : (
+                      <span className="detected-density"> (density unknown)</span>
+                    )}
+                  </strong>
                   <select
                     value={mapping.controllerId}
                     onChange={(event) =>

@@ -249,6 +249,52 @@ test("renders and distributes an effect frame on playback start", async () => {
   service.stop(session.id);
 });
 
+test("resolves a mapping's ledsPerMeter from the live controller instead of a stale/null canvas snapshot", async () => {
+  const seenLedsPerMeter = [];
+  const service = new PlaybackService({
+    canvasService: {
+      get: (id) =>
+        id === "canvas-1"
+          ? {
+              id,
+              width: 1,
+              height: 1,
+              // Snapshot is null, as it is on a canvas built (or last saved)
+              // before the controller's density was known/updated.
+              mappings: [{ controllerId: "deck-1", stripIndex: 0, ledsPerMeter: null }],
+            }
+          : null,
+    },
+    controllerService: {
+      get: (id) => (id === "deck-1" ? { id, ledsPerMeter: [30] } : null),
+    },
+    effectService: {
+      get: (id) =>
+        id === "probe"
+          ? {
+              id,
+              renderer: "probe",
+              parameters: {},
+            }
+          : null,
+    },
+    renderService: {
+      render: ({ canvas }) => {
+        seenLedsPerMeter.push(canvas.mappings[0].ledsPerMeter);
+        return { timestamp: 0, pixels: [[0, 0, 0]] };
+      },
+    },
+    distributionService: {
+      distributeCanvasFrame: async () => ({ status: "sent", frameCount: 1, sent: [], failed: [] }),
+    },
+    idFactory: () => "session-1",
+    now: () => 1700000000000,
+  });
+  const session = await service.start({ canvasId: "canvas-1", effectId: "probe" });
+  assert.equal(seenLedsPerMeter[0], 30);
+  service.stop(session.id);
+});
+
 test("starts a replacement effect after the previous canvas timeline", async () => {
   const sent = [];
   const ids = ["session-1", "session-2"];

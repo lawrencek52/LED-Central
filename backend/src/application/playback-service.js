@@ -7,6 +7,7 @@ export class PlaybackService {
     effectService,
     renderService,
     distributionService,
+    controllerService = null,
     playbackRepository = null,
     eventHub = null,
     idFactory = uuidv4,
@@ -21,6 +22,7 @@ export class PlaybackService {
     this.effectService = effectService;
     this.renderService = renderService;
     this.distributionService = distributionService;
+    this.controllerService = controllerService;
     this.playbackRepository = playbackRepository;
     this.eventHub = eventHub;
     this.idFactory = idFactory;
@@ -83,8 +85,30 @@ export class PlaybackService {
     return [...this.sessions.values()];
   }
 
+  // A canvas mapping's ledsPerMeter is snapshotted onto it when the strip is
+  // assigned (see CanvasBuilder.jsx) and never updated afterward, so a
+  // controller whose density is detected (or corrected) later leaves every
+  // canvas already built from it stuck on stale/unknown density - silently
+  // defeating fire/classic-fire's per-strip density correction. Re-resolve
+  // each mapping's density from its controller's current record at playback
+  // start instead of trusting the snapshot, so density stays live without
+  // requiring canvases to be rebuilt.
+  withLiveDensity(canvas) {
+    if (!this.controllerService || !canvas) return canvas;
+    return {
+      ...canvas,
+      mappings: canvas.mappings.map((mapping) => {
+        const controller = this.controllerService.get(mapping.controllerId);
+        const liveDensity = Number(controller?.ledsPerMeter?.[mapping.stripIndex]);
+        return Number.isFinite(liveDensity) && liveDensity > 0
+          ? { ...mapping, ledsPerMeter: liveDensity }
+          : mapping;
+      }),
+    };
+  }
+
   async start({ canvasId, effectId, parameters = {}, fps }) {
-    const canvas = this.canvasService.get(canvasId);
+    const canvas = this.withLiveDensity(this.canvasService.get(canvasId));
     const effect = this.effectService.get(effectId);
     if (!canvas) throw new EffectRenderError("Canvas not found", 404);
     if (!effect) throw new EffectRenderError("Effect not found", 404);

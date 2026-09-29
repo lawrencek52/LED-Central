@@ -80,6 +80,7 @@ export function createApp({
       effectService,
       renderService: new EffectRenderService(),
       distributionService,
+      controllerService,
       eventHub,
       playbackRepository,
       audioService,
