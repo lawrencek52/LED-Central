@@ -657,3 +657,68 @@ test("a large catch-up deficit skips ahead to now instead of bursting every miss
     for (const session of service.list()) service.stop(session.id);
   }
 });
+
+test("a large catch-up deficit publishes a playback.catchup event describing the skipped gap", async () => {
+  // Regression test for a real reported symptom: the controller freezes for
+  // a fraction of a second every so often, but the queue-depth status
+  // endpoint reads as normal because it can't see a skipped-ahead gap
+  // (session.lastFrameAt is deliberately re-anchored to "now + targetQueueMs"
+  // right when the gap is created). This event is the one place that gap is
+  // ever surfaced, so it needs to actually fire with a sane, positive gapMs.
+  const events = [];
+  let callCount = 0;
+  const service = new PlaybackService({
+    canvasService: {
+      get: (id) =>
+        id === "canvas-1"
+          ? {
+              id,
+              width: 1,
+              height: 1,
+              mappings: [{ controllerId: "deck-1", stripIndex: 0 }],
+            }
+          : null,
+    },
+    effectService: {
+      get: (id) =>
+        id === "solid"
+          ? { id, renderer: "solid", parameters: { color: { default: "#ffffff" } } }
+          : null,
+    },
+    renderService: new EffectRenderService(),
+    distributionService: {
+      distributeCanvasFrames: async ({ frames }) => {
+        callCount += 1;
+        // A long stall on the second call, same setup as the sibling test
+        // above - by the time it resolves, the target queue is hundreds of
+        // ms behind session.lastFrameAt at this fast a frame rate.
+        if (callCount === 2) await new Promise((resolve) => setTimeout(resolve, 300));
+        return { status: "sent", frameCount: frames.length, sent: [], failed: [] };
+      },
+    },
+    eventHub: { publish: (event) => events.push(event) },
+    idFactory: () => "session-1",
+    frameRate: 100,
+    targetQueueMs: 10,
+    maxCatchUpFrames: 4,
+  });
+
+  try {
+    const session = await service.start({ canvasId: "canvas-1", effectId: "solid" });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const catchupEvents = events.filter((event) => event.type === "playback.catchup");
+    assert.ok(catchupEvents.length >= 1, "expected at least one playback.catchup event");
+    const event = catchupEvents[0];
+    assert.equal(event.payload.sessionId, "session-1");
+    assert.equal(event.payload.canvasId, "canvas-1");
+    assert.ok(event.payload.framesBehind > service.maxCatchUpFrames);
+    assert.ok(
+      event.payload.gapMs > 0,
+      `expected a positive skipped gap, got ${event.payload.gapMs}`,
+    );
+    service.stop(session.id);
+  } finally {
+    for (const session of service.list()) service.stop(session.id);
+  }
+});

@@ -328,6 +328,29 @@ export class PlaybackService {
           // extra write is one more chance to hit another stall and fall
           // further behind. Skip straight to now and resume normal
           // single-frame pacing from there instead.
+          //
+          // The trade-off: the controller has nothing new to draw for the
+          // skipped span (firstFrameAt - the old next-in-line timestamp), so
+          // it holds its last frame - a real, visible freeze - until the
+          // jumped-ahead frame's timestamp arrives. Logged here (rather than
+          // silently absorbed) since this is the one place frame timestamps
+          // aren't contiguous, and the queue-depth status endpoint can't see
+          // it either: right after this jump, queued lookahead reads as
+          // "normal" again (a fresh frame was just sent targetQueueMs out).
+          const gapMs = targetLastFrameAt - firstFrameAt;
+          console.warn(
+            `[playback] session ${session.id} (canvas ${session.canvasId}) fell ${framesNeeded} frames behind - skipping ahead ${Math.round(gapMs)}ms instead of catching up, which will show as a brief freeze`,
+          );
+          this.eventHub?.publish({
+            topic: "playback",
+            type: "playback.catchup",
+            payload: {
+              sessionId: session.id,
+              canvasId: session.canvasId,
+              framesBehind: framesNeeded,
+              gapMs,
+            },
+          });
           framesNeeded = 1;
           firstFrameAt = targetLastFrameAt;
         }
