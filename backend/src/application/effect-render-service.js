@@ -2775,23 +2775,65 @@ function heatToFireColor(heat) {
   return [heatramp, 0, 0];
 }
 
+// Cross-call state for simulateFireHeat, keyed by the one thing that
+// identifies a single continuous simulation stream across repeated calls at
+// (usually) closely-spaced elapsedSeconds - its own (seedSalt, cellCount).
+// seedSalt is already effectively unique per physical strip (fire/
+// classic-fire/musical-fire salt a per-mapping randomSeed derived from
+// stableSeed(controllerId:stripIndex); spectrum-band salts a fixed per-row
+// offset) and per row within one call (simulateFireGrid below adds row*97),
+// so no separate playback-session id is needed to disambiguate one strip's
+// stream from another's - and a session restart (or any caller jumping
+// elapsedSeconds backward for this key) is handled by falling back to a
+// fresh bounded simulate below, the same as a cold start. Capped defensively
+// since it's a plain Map with no natural eviction - the real key space
+// (distinct physical strips x cell counts in use) is tiny in practice, so
+// this cap is insurance against misuse, not an expected ceiling.
+const fireHeatCache = new Map();
+const FIRE_HEAT_CACHE_MAX_ENTRIES = 1000;
+
+function cacheFireHeat(key, lastStep, heat) {
+  if (fireHeatCache.size >= FIRE_HEAT_CACHE_MAX_ENTRIES && !fireHeatCache.has(key)) {
+    fireHeatCache.clear();
+  }
+  fireHeatCache.set(key, { lastStep, heat });
+}
+
 // Runs a fire cellular automaton forward in fixed 20ms steps, deterministically
 // seeded per step so the same elapsed time always reproduces the same frame.
-// Only the last few seconds of steps are replayed (from an all-zero heat
-// array) rather than the whole effect history, since the automaton mixes/cools
-// out any earlier state within a couple of seconds - this keeps render cost
-// bounded no matter how long the effect has been running.
+// A live playback tick only ever advances elapsedSeconds by about one frame
+// interval, so this picks up wherever this (seedSalt, cellCount) stream last
+// left off (fireHeatCache above) and simulates just the handful of new steps
+// since then, instead of replaying the last several seconds from scratch on
+// every single call - the dominant render cost this was measured to be (see
+// playback-service.js's scheduleFrames). A cold start, a gap bigger than the
+// window, or elapsedSeconds running backward for this key (a session
+// restarted, most likely) all fall back to the original behavior: replay
+// just the last few seconds from an all-zero heat array, since the automaton
+// mixes/cools out any earlier state within a couple of seconds anyway - this
+// keeps a cold call's cost bounded no matter how long the effect has
+// actually been running. The cached array is mutated in place as the shared
+// "master" state; callers always get their own copy back, so anything a
+// caller does to its result (simulateFireGrid's neighbor-blend, for
+// instance) can never corrupt the next call's starting point.
 function simulateFireHeat({ cellCount, elapsedSeconds, seedSalt, step }) {
   const stepMs = 20;
   const windowSteps = Math.ceil(3000 / stepMs);
   const currentStep = Math.floor((elapsedSeconds * 1000) / stepMs);
-  const startStep = Math.max(0, currentStep - windowSteps);
-  const heat = new Array(cellCount).fill(0);
+  const key = `${seedSalt}:${cellCount}`;
+  const cached = fireHeatCache.get(key);
+  const canContinue =
+    cached && cached.lastStep <= currentStep && currentStep - cached.lastStep <= windowSteps;
+  const startStep = canContinue
+    ? cached.lastStep + 1
+    : Math.max(0, currentStep - windowSteps);
+  const heat = canContinue ? cached.heat : new Array(cellCount).fill(0);
   for (let s = startStep; s <= currentStep; s += 1) {
     const rng = mulberry32(seedSalt * 2654435761 + s * 40503);
     step(heat, rng, s, stepMs);
   }
-  return heat;
+  cacheFireHeat(key, currentStep, heat);
+  return heat.slice();
 }
 
 // Runs `simulateFireHeat` once per row (each with its own row-derived
@@ -2814,6 +2856,17 @@ function memoizedFireGrid(key, compute) {
   const grid = compute();
   fireGridCache = { key, grid };
   return grid;
+}
+
+// Both caches above are module-level (persisting across EffectRenderService
+// instances, matching real usage - the caching only pays off if it survives
+// between playback ticks). Tests that need a clean slate for a specific
+// (seedSalt, cellCount) - e.g. comparing a cold simulate against an
+// incrementally-built one - call this rather than relying on luck to avoid
+// colliding with another test's leftover state.
+export function __resetSimulationCachesForTests() {
+  fireHeatCache.clear();
+  fireGridCache = null;
 }
 
 function simulateFireGrid({

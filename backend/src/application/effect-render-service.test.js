@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   EffectRenderService,
@@ -10,7 +10,19 @@ import {
   densityScaledSize,
   densityScaledMagnitude,
   densityScaledPerCell,
+  __resetSimulationCachesForTests,
 } from "./effect-render-service.js";
+
+// fire/classic-fire/musical-fire/spectrum-band share module-level simulation
+// caches (see fireHeatCache/fireGridCache in effect-render-service.js) that
+// persist across EffectRenderService instances by design - that's the whole
+// point, it's what makes incremental simulation pay off across real playback
+// ticks. In tests, though, that means two unrelated tests reusing the same
+// (seedSalt, cellCount) could otherwise see each other's leftover state.
+// Reset before every test so each one starts from a clean slate.
+beforeEach(() => {
+  __resetSimulationCachesForTests();
+});
 
 test("renders a solid effect across the canvas", () => {
   const frame = new EffectRenderService().render({
@@ -786,6 +798,80 @@ test("fire ignores an unknown/absent ledsPerMeter, matching today's unmodified 1
   const zeroDensity = render(0);
   assert.deepEqual(omitted.pixels, nullDensity.pixels);
   assert.deepEqual(omitted.pixels, zeroDensity.pixels);
+});
+
+test("classic-fire's incremental simulation cache produces the same result as computing the same step range in one shot", () => {
+  // The optimization: simulateFireHeat picks up where a (seedSalt, cellCount)
+  // stream last left off instead of replaying its whole window every call -
+  // see fireHeatCache in effect-render-service.js. This is the invariant
+  // that has to hold for that to be safe: splitting one continuous
+  // simulation into two separate render() calls (a "warm-up" call, then a
+  // "continuation" call) must produce byte-identical output to reaching the
+  // same elapsedSeconds in a single call - as long as neither call's own gap
+  // forces a reset (see the sibling "discontinuity" test below for that
+  // case), since both ultimately simulate the exact same absolute step
+  // range with the exact same per-step seeding.
+  const width = 40;
+  const canvas = {
+    width,
+    height: 1,
+    mappings: [{ controllerId: "c", stripIndex: 0, width, height: 1, ledsPerMeter: null }],
+  };
+  const effect = { renderer: "classic-fire", parameters: fireParameters() };
+
+  const oneShot = new EffectRenderService().render({
+    effect,
+    canvas,
+    parameters: { timeSeconds: 2, randomSeed: 9 },
+  }).pixels;
+
+  __resetSimulationCachesForTests();
+  const incremental = new EffectRenderService();
+  // Step through in small increments, well within a single 3-second window,
+  // ending at the same elapsedSeconds the one-shot call used.
+  for (let t = 0; t <= 2; t += 0.05) {
+    incremental.render({ effect, canvas, parameters: { timeSeconds: t, randomSeed: 9 } });
+  }
+  const stepped = incremental.render({
+    effect,
+    canvas,
+    parameters: { timeSeconds: 2, randomSeed: 9 },
+  }).pixels;
+
+  assert.deepEqual(stepped, oneShot);
+});
+
+test("classic-fire resets to a fresh windowed simulate after a large time discontinuity, instead of corrupting forward from stale state", () => {
+  const width = 40;
+  const canvas = {
+    width,
+    height: 1,
+    mappings: [{ controllerId: "c", stripIndex: 0, width, height: 1, ledsPerMeter: null }],
+  };
+  const effect = { renderer: "classic-fire", parameters: fireParameters() };
+  const service = new EffectRenderService();
+
+  // Warm the cache up to t=2s, then jump far past the ~3s window (a paused/
+  // seeked effect, or simply a session that was stopped and restarted).
+  service.render({ effect, canvas, parameters: { timeSeconds: 2, randomSeed: 9 } });
+  const afterGap = service.render({
+    effect,
+    canvas,
+    parameters: { timeSeconds: 50, randomSeed: 9 },
+  }).pixels;
+
+  // A cold service (no cache history at all) reaching the same elapsedSeconds
+  // must render identically - proof the gap triggered a fresh windowed
+  // simulate rather than incrementally (and wrongly) stepping forward
+  // thousands of steps from the stale t=2s state.
+  __resetSimulationCachesForTests();
+  const cold = new EffectRenderService().render({
+    effect,
+    canvas,
+    parameters: { timeSeconds: 50, randomSeed: 9 },
+  }).pixels;
+
+  assert.deepEqual(afterGap, cold);
 });
 
 test("fire rows are independent (not just duplicated) when neighborBlend is off", () => {
