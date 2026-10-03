@@ -1203,6 +1203,19 @@ h3 {
   border-radius: 14px;
   background: var(--panel);
 }
+.status-heading-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+.host-cpu {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
 .status-canvas {
   overflow: hidden;
   border: 1px solid var(--line);

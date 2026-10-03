@@ -52,3 +52,53 @@ test("reports 0 frames per second for an inactive canvas", async (t) => {
   assert.equal(body.canvases[0].effectName, "Inactive");
   assert.equal(body.canvases[0].framesPerSecond, 0);
 });
+
+test("reports per-core host CPU utilization", async (t) => {
+  const canvasService = { list: () => [] };
+  const playbackService = { list: () => [], effectService: { get: () => null } };
+  const server = createServer(
+    createApp({ canvasService, controllerService: { get: () => null }, gateway: {}, playbackService }),
+  ).listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(() => server.close());
+
+  const { body } = await request(server, "/api/status");
+  assert.ok(Array.isArray(body.hostCpu));
+  assert.ok(body.hostCpu.length > 0);
+  for (const value of body.hostCpu) assert.ok(value >= 0 && value <= 100);
+});
+
+test("reports each strip's recv/draw rates from the controller and its sent KiB/s", async (t) => {
+  const canvas = {
+    id: "canvas-1",
+    name: "Deck",
+    width: 2,
+    height: 2,
+    mappings: [
+      { controllerId: "deck-1", stripIndex: 0, x: 0, y: 0, width: 2, height: 1 },
+      { controllerId: "deck-1", stripIndex: 1, x: 0, y: 1, width: 2, height: 1 },
+    ],
+  };
+  const controller = { id: "deck-1", name: "Deck1", host: "deck1.local", port: 49152 };
+  const gateway = {
+    getQueueStatus: () => ({ queuedFrames: 30, framesPerSecond: 20, kibPerSecond: 3.2, activeChannels: 2 }),
+    getControllerStats: () => ({ receivedPerSecond: 40, drawFps: 20 }),
+  };
+  const playbackService = { list: () => [], effectService: { get: () => null } };
+  const server = createServer(
+    createApp({
+      canvasService: { list: () => [canvas] },
+      controllerService: { get: () => controller },
+      gateway,
+      playbackService,
+    }),
+  ).listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(() => server.close());
+
+  const { body } = await request(server, "/api/status");
+  const [strip] = body.canvases[0].strips;
+  assert.equal(strip.recvFps, 20);
+  assert.equal(strip.drawFps, 20);
+  assert.equal(strip.kibPerSecond, 3.2);
+});

@@ -33,6 +33,7 @@ export class TcpControllerGateway {
     this.webPort = webPort;
     this.previewStates = new Map();
     this.audioStates = new Map();
+    this.controllerStats = new Map();
   }
 
   // Connections are keyed per (controller, channel) rather than per controller
@@ -207,7 +208,7 @@ export class TcpControllerGateway {
             }
             try {
               await write(socket, packet);
-              this.recordSent(controller.id, frame);
+              this.recordSent(controller.id, frame, packet.length);
               break;
             } catch (error) {
               socket.destroy();
@@ -221,7 +222,7 @@ export class TcpControllerGateway {
     await send;
   }
 
-  recordSent(controllerId, frame) {
+  recordSent(controllerId, frame, bytes = 0) {
     const now = Date.now();
     const state = this.queueStates.get(controllerId) ?? {
       frames: [],
@@ -237,7 +238,7 @@ export class TcpControllerGateway {
       pixels: frame.pixels,
     });
     state.sentAt = state.sentAt.filter((item) => item.at >= now - 1000);
-    state.sentAt.push({ at: now, channelMask });
+    state.sentAt.push({ at: now, channelMask, bytes });
     this.queueStates.set(controllerId, state);
   }
 
@@ -258,7 +259,70 @@ export class TcpControllerGateway {
         (item) => (item.channelMask & channelMask) !== 0,
       ).length,
       framesPerSecond: sentAt.length,
+      kibPerSecond: Number(
+        (sentAt.reduce((total, item) => total + item.bytes, 0) / 1024).toFixed(1),
+      ),
+      // Distinct channels this controller has been sent frames on in the
+      // last second - its PACKETS_RX counter is shared across all of them.
+      activeChannels: new Set(state.sentAt.map((item) => item.channelMask)).size,
       latestFrame: state.latestFrames.get(channelMask) ?? null,
+    };
+  }
+
+  // The controller's own view of playback, from its /statistics/dynamic:
+  // how many pixel packets it's actually receiving per second (PACKETS_RX is
+  // a running total across every channel, so this is a delta between polls)
+  // and how fast it's drawing (LED_FPS). Unlike the preview stats below this
+  // needs no WebSocket, so it's available whether or not a preview is open.
+  // Pure read of the last poll; a refresh is kicked off in the background at
+  // most once a second, only while something (the Status page) is asking.
+  getControllerStats(controller) {
+    const state = this.controllerStats.get(controller.id) ?? {
+      fetchedAt: 0,
+      inFlight: false,
+      packetsRx: null,
+      receivedPerSecond: null,
+      drawFps: null,
+    };
+    this.controllerStats.set(controller.id, state);
+    if (!state.inFlight && Date.now() - state.fetchedAt >= 1000) {
+      state.inFlight = true;
+      fetch(`http://${controller.host}:${this.webPort}/statistics/dynamic`, {
+        signal: AbortSignal.timeout(this.connectionTimeoutMs),
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((stats) => {
+          const now = Date.now();
+          const packetsRx = Number(stats?.PACKETS_RX);
+          if (!stats || !Number.isFinite(packetsRx)) {
+            state.receivedPerSecond = null;
+            state.drawFps = stats ? Number(stats.LED_FPS || 0) : null;
+            state.packetsRx = null;
+          } else {
+            // A counter that went backwards means the controller rebooted.
+            state.receivedPerSecond =
+              state.packetsRx !== null && packetsRx >= state.packetsRx
+                ? ((packetsRx - state.packetsRx) * 1000) /
+                  Math.max(1, now - state.fetchedAt)
+                : state.receivedPerSecond;
+            state.packetsRx = packetsRx;
+            state.drawFps = Number(stats.LED_FPS || 0);
+          }
+          state.fetchedAt = now;
+        })
+        .catch(() => {
+          state.fetchedAt = Date.now();
+          state.packetsRx = null;
+          state.receivedPerSecond = null;
+          state.drawFps = null;
+        })
+        .finally(() => {
+          state.inFlight = false;
+        });
+    }
+    return {
+      receivedPerSecond: state.receivedPerSecond,
+      drawFps: state.drawFps,
     };
   }
 

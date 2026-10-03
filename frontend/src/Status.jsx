@@ -165,7 +165,14 @@ function Status({ onError }) {
           <p className="eyebrow">Live output</p>
           <h2>Playback status</h2>
         </div>
-        <span className="count-badge">Updates every second</span>
+        <div className="status-heading-meta">
+          {status.hostCpu?.length ? (
+            <span className="host-cpu" title="Per-core CPU utilization of the LED-Central host">
+              <b>CPU</b> {status.hostCpu.join("/")} %
+            </span>
+          ) : null}
+          <span className="count-badge">Updates every second</span>
+        </div>
       </div>
       {status.canvases.length === 0 ? (
         <div className="empty-state">
