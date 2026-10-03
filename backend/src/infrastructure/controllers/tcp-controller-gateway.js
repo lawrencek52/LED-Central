@@ -14,8 +14,17 @@ const COMPRESSED_HEADER = 0x44415645; // ASCII "DAVE", read back little-endian
 const COMPRESSED_HEADER_SIZE = 16;
 
 export class TcpControllerGateway {
-  constructor({ connectionTimeoutMs = 5000, webPort = 80 } = {}) {
+  constructor({
+    connectionTimeoutMs = 5000,
+    webPort = 80,
+    reconnectDelayMs = 1000,
+  } = {}) {
     this.connectionTimeoutMs = connectionTimeoutMs;
+    this.reconnectDelayMs = reconnectDelayMs;
+    // Connection keys whose last connect attempt failed, mapped to the
+    // earliest time another background attempt may start - see
+    // sendChannelFrames().
+    this.offlineUntil = new Map();
     this.connections = new Map();
     this.connectionPromises = new Map();
     this.sendQueues = new Map();
@@ -104,6 +113,7 @@ export class TcpControllerGateway {
 
       socket.once("connect", () => {
         clearTimeout(timeout);
+        this.offlineUntil.delete(key);
         this.statuses.set(key, {
           controllerId: controller.id,
           connected: true,
@@ -118,7 +128,12 @@ export class TcpControllerGateway {
         });
         reject(error);
       });
-    }).finally(() => this.connectionPromises.delete(key));
+    })
+      .catch((error) => {
+        this.offlineUntil.set(key, Date.now() + this.reconnectDelayMs);
+        throw error;
+      })
+      .finally(() => this.connectionPromises.delete(key));
     this.connectionPromises.set(key, connection);
     return connection;
   }
@@ -157,12 +172,30 @@ export class TcpControllerGateway {
     );
   }
 
+  // Once a channel's connect has failed (controller rebooting, off the
+  // network, etc.), later sends fail fast while a reconnect runs in the
+  // background, rather than each one awaiting a fresh connect attempt. A
+  // playback tick awaits every controller on the canvas, so blocking here for
+  // up to connectionTimeoutMs per tick froze every *other* controller on the
+  // canvas for as long as the missing one stayed down (seen live on
+  // 2026-10-03 rebooting Deck1: repeated 5-8s whole-canvas freezes).
   async sendChannelFrames(controller, channelMask, frames) {
     const key = this.connectionKey(controller.id, channelMask);
     const previous = this.sendQueues.get(key) ?? Promise.resolve();
     const send = previous
       .catch(() => {})
       .then(async () => {
+        if (this.offlineUntil.has(key)) {
+          if (
+            Date.now() >= this.offlineUntil.get(key) &&
+            !this.connectionPromises.has(key)
+          ) {
+            this.connect(controller, channelMask).catch(() => {});
+          }
+          throw new Error(
+            `Controller ${controller.id} is offline, reconnecting`,
+          );
+        }
         let socket = await this.connect(controller, channelMask);
         for (const frame of frames) {
           const raw = encodePixelFrame(frame);
@@ -496,6 +529,9 @@ export class TcpControllerGateway {
     }
     for (const key of [...this.statuses.keys()]) {
       if (key.startsWith(prefix)) this.statuses.delete(key);
+    }
+    for (const key of [...this.offlineUntil.keys()]) {
+      if (key.startsWith(prefix)) this.offlineUntil.delete(key);
     }
   }
 }

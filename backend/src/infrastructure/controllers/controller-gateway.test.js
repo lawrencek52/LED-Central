@@ -178,3 +178,44 @@ test("TCP gateway handles a controller socket error without crashing", async (t)
     connected: false,
   });
 });
+
+test("TCP gateway fails fast while a controller is offline and reconnects once it's back", async (t) => {
+  // Reserve a port, then free it so the first connect is refused.
+  const probe = net.createServer().listen(0, "127.0.0.1");
+  await new Promise((resolve) => probe.once("listening", resolve));
+  const port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+
+  const gateway = new TcpControllerGateway({
+    connectionTimeoutMs: 1000,
+    reconnectDelayMs: 20,
+  });
+  const controller = { id: "controller-1", host: "127.0.0.1", port };
+  const frame = { timestamp: Date.now(), channelMask: 1, pixels: [[1, 2, 3]] };
+
+  await assert.rejects(gateway.sendFrames(controller, [frame]), /ECONNREFUSED/);
+  // Known offline: rejected without awaiting another connect attempt.
+  await assert.rejects(gateway.sendFrames(controller, [frame]), /offline/);
+
+  let received = 0;
+  const sockets = new Set();
+  const deviceServer = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("data", (data) => {
+      received += data.length;
+    });
+  });
+  deviceServer.listen(port, "127.0.0.1");
+  await new Promise((resolve) => deviceServer.once("listening", resolve));
+  t.after(() => {
+    for (const serverSocket of sockets) serverSocket.destroy();
+    deviceServer.close();
+  });
+
+  for (let attempt = 0; attempt < 50 && received === 0; attempt += 1) {
+    await gateway.sendFrames(controller, [frame]).catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(received > 0);
+  assert.equal(gateway.getStatus(controller.id).connected, true);
+});

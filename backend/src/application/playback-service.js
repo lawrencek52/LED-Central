@@ -139,7 +139,10 @@ export class PlaybackService {
       count: this.queueFrameCount(frameRate, targetQueueMs),
       frameRate,
     });
-    const distribution = await this.distributeFrames({ canvas, frames });
+    const distribution = await this.distributeFramesOrOffline({
+      canvas,
+      frames,
+    });
     const session = {
       id: this.idFactory(),
       status: "playing",
@@ -266,6 +269,29 @@ export class PlaybackService {
     );
   }
 
+  // "No controller on this canvas accepted the frames" (status 503) is
+  // treated as a transient outage - every controller rebooting or briefly
+  // off WiFi - rather than an error that ends playback: the session keeps
+  // ticking, the gateway keeps reconnecting in the background, and frames
+  // resume reaching the strips as soon as a controller is back. Previously
+  // one such tick marked the session "error" and never rescheduled it, so a
+  // rebooted controller stayed dark until playback was restarted by hand
+  // (and restore() dropped the saved intent if controllers were down at
+  // backend startup). Anything else (e.g. a 400 mapping error) still throws.
+  async distributeFramesOrOffline({ canvas, frames }) {
+    try {
+      return await this.distributeFrames({ canvas, frames });
+    } catch (error) {
+      if (error.statusCode !== 503) throw error;
+      return {
+        status: "offline",
+        frameCount: frames.length,
+        sent: [],
+        failed: error.details?.failed ?? [],
+      };
+    }
+  }
+
   async distributeFrames({ canvas, frames }) {
     if (this.distributionService.distributeCanvasFrames) {
       return this.distributionService.distributeCanvasFrames({
@@ -365,7 +391,7 @@ export class PlaybackService {
             frameRate: session.frameRate,
           });
           session.lastFrameAt = frames[frames.length - 1].timestamp;
-          const distribution = await this.distributeFrames({
+          const distribution = await this.distributeFramesOrOffline({
             canvas,
             frames,
           });

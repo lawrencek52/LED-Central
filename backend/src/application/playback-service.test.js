@@ -722,3 +722,64 @@ test("a large catch-up deficit publishes a playback.catchup event describing the
     for (const session of service.list()) service.stop(session.id);
   }
 });
+
+test("keeps playing through a tick where no controller accepts frames, and resumes when one is back", async () => {
+  let offline = false;
+  let delivered = 0;
+  const service = new PlaybackService({
+    ...baseServiceOptions(),
+    distributionService: {
+      distributeCanvasFrame: async () => {
+        if (offline) {
+          throw Object.assign(new Error("No controllers accepted the canvas frame"), {
+            statusCode: 503,
+            details: { sent: [], failed: [{ controllerId: "deck-1", error: "offline" }] },
+          });
+        }
+        delivered += 1;
+        return { status: "sent", frameCount: 1, sent: [], failed: [] };
+      },
+    },
+    idFactory: () => "session-1",
+    frameRate: 1000,
+  });
+
+  const session = await service.start({ canvasId: "canvas-1", effectId: "solid" });
+  offline = true;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(session.status, "playing");
+  assert.equal(session.distribution.status, "offline");
+
+  const deliveredWhileOffline = delivered;
+  offline = false;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(delivered > deliveredWhileOffline);
+  assert.equal(session.status, "playing");
+  service.stop(session.id);
+});
+
+test("restoring playback while its controllers are offline keeps the session and saved intent", async () => {
+  const intents = [{ canvasId: "canvas-1", effectId: "solid", parameters: {}, fps: 20 }];
+  const service = new PlaybackService({
+    ...baseServiceOptions(),
+    distributionService: {
+      distributeCanvasFrame: async () => {
+        throw Object.assign(new Error("No controllers accepted the canvas frame"), {
+          statusCode: 503,
+        });
+      },
+    },
+    playbackRepository: {
+      list: () => [...intents],
+      save: (intent) => intents.splice(0, intents.length, intent),
+      remove: () => intents.splice(0, intents.length),
+    },
+    idFactory: () => "restored-session",
+  });
+
+  await service.restore();
+  const [session] = service.list();
+  assert.equal(session.status, "playing");
+  assert.equal(intents.length, 1);
+  service.stop(session.id);
+});
