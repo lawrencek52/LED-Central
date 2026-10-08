@@ -634,9 +634,10 @@ test("fire stays within its configured height ceiling and doesn't light the far 
   }
 });
 
-test("fire burns from the same end on a matrix as on a strip with default reversed", () => {
+test("fire burns upward from the bottom of a matrix when not reversed", () => {
   const service = new EffectRenderService();
   const capped = fireParameters({
+    reversed: { default: false },
     minHeightFraction: { default: 0.4 },
     averageHeightFraction: { default: 0.4 },
     maxHeightFraction: { default: 0.4 },

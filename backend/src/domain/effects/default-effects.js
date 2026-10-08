@@ -253,7 +253,7 @@ export const defaultEffects = [
     id: "nds-fire",
     name: "Fire",
     description:
-      'Heat-diffusion fire simulation ported from NightDriverStrip\'s FireEffect ("Medium Fire"). A single source burns from the start of the strip (near the controller); on a canvas with several parallel strips, neighboring rows blend together into one connected fire. Palette picks the color family as sparks cool: red (white/yellow/red), green (white/magenta/green) or blue (white/cyan/blue).',
+      'Heat-diffusion fire simulation ported from NightDriverStrip\'s FireEffect ("Medium Fire"). A single source burns from one end of each strip (Reversed flips which end), and upward from the bottom on a matrix; on a canvas with several parallel strips, neighboring rows blend together into one connected fire. Palette picks the color family as sparks cool: red (white/yellow/red), green (white/magenta/green) or blue (white/cyan/blue).',
     renderer: "fire",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
@@ -266,7 +266,7 @@ export const defaultEffects = [
         options: ["red", "green", "blue"],
         default: "red",
       },
-      reversed: { type: "boolean", default: true },
+      reversed: { type: "boolean", default: false },
       mirrored: { type: "boolean", default: false },
       minHeightFraction: { type: "number", min: 0, max: 1, default: 0.2 },
       averageHeightFraction: { type: "number", min: 0, max: 1, default: 0.7 },

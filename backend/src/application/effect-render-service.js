@@ -916,16 +916,17 @@ const renderers = {
     });
 
     // Position along the flame axis's simulated (possibly supersampled)
-    // buffer, after `reversed` has been applied. The simulation's hot,
-    // spark-fed base is its high index, so `reversed` (the default) is what
-    // puts the base at display index 0 - the start of a strip, near the
-    // controller. On a matrix that same index 0 is treated as the ground
-    // (matrixAscendToY's own convention), so the default `reversed` burns
-    // upward from the bottom there too, and toggling it flips both kinds of
-    // canvas the same way instead of the matrix being upside down relative
-    // to the strips.
+    // buffer, after `reversed` has been applied. axisPos runs from the
+    // flame's cool tip (0) to its hot, spark-fed base (flameAxisSimSize-1),
+    // so on a matrix its "ascend progress" (matrixAscendToY's own
+    // convention, 0 = ground) is the axis run in reverse: unreversed (the
+    // default) burns upward from the physical bottom. A strip/parallel
+    // canvas has no such flip - which end of the strip is the ground is the
+    // canvas mapping's own `reversed`, a fact about the wiring.
     const flameAxisIndex = (pos) =>
-      isMatrix ? matrixAscendToY(pos, flameAxisSimSize, upIsPositiveY) : pos;
+      isMatrix
+        ? matrixAscendToY(flameAxisSimSize - 1 - pos, flameAxisSimSize, upIsPositiveY)
+        : pos;
 
     const simWidth = isMatrix ? laneAxisSize : flameAxisSimSize;
     const simHeight = isMatrix ? flameAxisSimSize : laneAxisSize;
