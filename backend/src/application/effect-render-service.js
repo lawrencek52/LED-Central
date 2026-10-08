@@ -830,6 +830,7 @@ const renderers = {
     const reversed = Boolean(parameters.reversed);
     const mirrored = Boolean(parameters.mirrored);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    const heatRamp = FIRE_HEAT_RAMPS[parameters.palette] ?? FIRE_HEAT_RAMPS.red;
 
     const isParallel = parameters.stripCount !== undefined;
     const isMatrix = !isParallel && canvasHeight > 1;
@@ -915,15 +916,16 @@ const renderers = {
     });
 
     // Position along the flame axis's simulated (possibly supersampled)
-    // buffer. axisPos runs from the flame's cool tip (0) to its hot,
-    // spark-fed base (flameAxisSimSize-1), which physically belongs at the
-    // ground - so its "ascend progress" (matrixAscendToY's own convention,
-    // 0 = ground) is the axis run in reverse. A strip/parallel canvas has no
-    // such flip, since it doesn't climb vertically at all.
+    // buffer, after `reversed` has been applied. The simulation's hot,
+    // spark-fed base is its high index, so `reversed` (the default) is what
+    // puts the base at display index 0 - the start of a strip, near the
+    // controller. On a matrix that same index 0 is treated as the ground
+    // (matrixAscendToY's own convention), so the default `reversed` burns
+    // upward from the bottom there too, and toggling it flips both kinds of
+    // canvas the same way instead of the matrix being upside down relative
+    // to the strips.
     const flameAxisIndex = (pos) =>
-      isMatrix
-        ? matrixAscendToY(flameAxisSimSize - 1 - pos, flameAxisSimSize, upIsPositiveY)
-        : pos;
+      isMatrix ? matrixAscendToY(pos, flameAxisSimSize, upIsPositiveY) : pos;
 
     const simWidth = isMatrix ? laneAxisSize : flameAxisSimSize;
     const simHeight = isMatrix ? flameAxisSimSize : laneAxisSize;
@@ -937,7 +939,7 @@ const renderers = {
     for (let lane = 0; lane < lanes; lane += 1) {
       const heat = grid[lane];
       for (let i = 0; i < ledCount; i += 1) {
-        const color = heatToFireColor(heat[i]);
+        const color = heatToFireColor(heat[i], heatRamp);
         const j = reversed ? ledCount - 1 - i : i;
         plot(j, lane, color);
         if (mirrored) {
@@ -969,6 +971,7 @@ const renderers = {
     const reversed = Boolean(parameters.reversed);
     const mirrored = Boolean(parameters.mirrored);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    const heatRamp = FIRE_HEAT_RAMPS[parameters.palette] ?? FIRE_HEAT_RAMPS.red;
 
     const isParallel = parameters.stripCount !== undefined;
     const isMatrix = !isParallel && canvasHeight > 1;
@@ -2766,13 +2769,26 @@ function setPixelAllColumns(pixels, width, height, y, color) {
 // FastLED's HeatColor() gradient (black -> red -> orange/yellow -> white),
 // used by both FireEffect (via GetBlackBodyHeatColor/HeatColors_p) and
 // ClassicFireEffect (via its own bit-shifted setPixelHeatColor).
-function heatToFireColor(heat) {
+// Selectable color families for `fire`'s heat ramp: black -> cool -> mid ->
+// white as heat rises. "red" is the original NightDriverStrip HeatColor
+// ramp (red -> yellow -> white) and reproduces it exactly; the others swap
+// in different cool/mid colors for the same three-segment shape.
+const FIRE_HEAT_RAMPS = {
+  red: { cool: [255, 0, 0], mid: [255, 255, 0] },
+  green: { cool: [0, 255, 0], mid: [255, 0, 255] },
+  blue: { cool: [0, 0, 255], mid: [0, 255, 255] },
+};
+
+function heatToFireColor(heat, ramp = FIRE_HEAT_RAMPS.red) {
   const t192 = Math.round((clamp(heat, 0, 255) / 255) * 191);
   let heatramp = t192 & 0x3f;
   heatramp <<= 2;
-  if (t192 & 0x80) return [255, 255, heatramp];
-  if (t192 & 0x40) return [255, heatramp, 0];
-  return [heatramp, 0, 0];
+  const t = heatramp / 255;
+  const lerp = (from, to) =>
+    from.map((channel, index) => Math.round(channel + (to[index] - channel) * t));
+  if (t192 & 0x80) return lerp(ramp.mid, [255, 255, 255]);
+  if (t192 & 0x40) return lerp(ramp.cool, ramp.mid);
+  return lerp([0, 0, 0], ramp.cool);
 }
 
 // Cross-call state for simulateFireHeat, keyed by the one thing that

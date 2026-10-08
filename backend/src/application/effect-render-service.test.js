@@ -634,6 +634,60 @@ test("fire stays within its configured height ceiling and doesn't light the far 
   }
 });
 
+test("fire burns from the same end on a matrix as on a strip with default reversed", () => {
+  const service = new EffectRenderService();
+  const capped = fireParameters({
+    minHeightFraction: { default: 0.4 },
+    averageHeightFraction: { default: 0.4 },
+    maxHeightFraction: { default: 0.4 },
+  });
+  const brightness = (pixels) =>
+    pixels.reduce((sum, [r, g, b]) => sum + r + g + b, 0);
+  const width = 8;
+  const height = 64;
+  let ground = 0;
+  let top = 0;
+  for (const timeSeconds of [3, 7.5, 12, 30]) {
+    // No mapping: upIsPositiveY is false, so the ground is the last row.
+    const frame = service.render({
+      effect: { renderer: "fire", parameters: capped },
+      canvas: { width, height },
+      parameters: { timeSeconds },
+    });
+    ground += brightness(frame.pixels.slice((height - 4) * width));
+    top += brightness(frame.pixels.slice(0, 4 * width));
+  }
+  assert.ok(ground > 0, "expected the ground rows to be lit");
+  assert.equal(top, 0, "expected the far (top) rows to stay dark");
+});
+
+test("fire's palette parameter recolors the heat ramp", () => {
+  const service = new EffectRenderService();
+  const renderWith = (palette) =>
+    service.render({
+      effect: {
+        renderer: "fire",
+        parameters: fireParameters({ palette: { default: palette } }),
+      },
+      canvas: { width: 120, height: 1 },
+      parameters: { timeSeconds: 5 },
+    }).pixels;
+  const red = renderWith("red");
+  const green = renderWith("green");
+  const blue = renderWith("blue");
+  const lit = (pixels) => pixels.filter(([r, g, b]) => r + g + b > 0);
+  // Red fire never has more blue than red; blue fire never has more red than
+  // blue; green fire's coolest (single-channel) cells are pure green.
+  assert.ok(lit(red).every(([r, , b]) => r >= b));
+  assert.ok(lit(blue).every(([r, , b]) => b >= r));
+  assert.ok(lit(blue).length > 0);
+  assert.ok(
+    lit(green).some(([r, g, b]) => r === 0 && b === 0 && g > 0),
+    "expected some pure-green cool cells",
+  );
+  assert.deepEqual(renderWith("unknown"), red);
+});
+
 test("fire blends neighboring rows together when neighborBlend is enabled", () => {
   const width = 30;
   const service = new EffectRenderService();
