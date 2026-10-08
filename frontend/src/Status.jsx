@@ -67,6 +67,7 @@ function uniqueControllers(strips) {
         controllerId: strip.controllerId,
         controllerName: strip.controllerName,
         address: strip.address,
+        wifiSignal: strip.wifiSignal,
       });
     }
   }
@@ -202,6 +203,12 @@ function Status({ onError }) {
                   >
                     <strong>{controller.controllerName}</strong>
                     <small>{controller.address}</small>
+                    {controller.wifiSignal !== null &&
+                    controller.wifiSignal !== undefined ? (
+                      <small title="WiFi signal reported by the controller">
+                        WiFi {controller.wifiSignal} dBm
+                      </small>
+                    ) : null}
                   </div>
                 ))}
               </div>

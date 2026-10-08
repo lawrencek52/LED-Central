@@ -57,6 +57,7 @@ export function createStatusRouter({
                 Math.max(1, queue.activeChannels ?? 1),
             ),
             drawFps: controllerStats.drawFps ?? 0,
+            wifiSignal: controllerStats.wifiSignal ?? null,
             kibPerSecond: queue.kibPerSecond ?? 0,
             queuedFrames: queue.queuedFrames,
             preview: latestFrame

@@ -4,8 +4,17 @@ import net from "node:net";
 import { FakeControllerGateway } from "./fake-controller-gateway.js";
 import {
   TcpControllerGateway,
+  consumeSocketResponses,
   encodePixelFrame,
 } from "./tcp-controller-gateway.js";
+
+// A firmware SocketResponse (72 bytes, little-endian) carrying `rssi`.
+function socketResponse(rssi) {
+  const buffer = Buffer.alloc(72);
+  buffer.writeUInt32LE(72, 0);
+  buffer.writeDoubleLE(rssi, 48);
+  return buffer;
+}
 
 test("fake gateway records frames and simulates connection status", async () => {
   const gateway = new FakeControllerGateway();
@@ -218,4 +227,76 @@ test("TCP gateway fails fast while a controller is offline and reconnects once i
   }
   assert.ok(received > 0);
   assert.equal(gateway.getStatus(controller.id).connected, true);
+});
+
+test("consumeSocketResponses parses packets split across reads and resyncs on garbage", () => {
+  const signals = [];
+  const onResponse = ({ wifiSignal }) => signals.push(wifiSignal);
+  const two = Buffer.concat([socketResponse(-55), socketResponse(-61)]);
+
+  let rest = consumeSocketResponses(two.subarray(0, 100), onResponse);
+  assert.deepEqual(signals, [-55]);
+  assert.equal(rest.length, 28);
+  rest = consumeSocketResponses(Buffer.concat([rest, two.subarray(100)]), onResponse);
+  assert.deepEqual(signals, [-55, -61]);
+  assert.equal(rest.length, 0);
+
+  rest = consumeSocketResponses(Buffer.from([1, 2, 3, 4, 5]), onResponse);
+  assert.equal(rest.length, 0);
+  assert.deepEqual(signals, [-55, -61]);
+});
+
+test("TCP gateway reports the WiFi signal from the controller's SocketResponses", async (t) => {
+  const deviceServer = net.createServer((socket) => {
+    socket.once("data", () => socket.write(socketResponse(-58)));
+  });
+  deviceServer.listen(0, "127.0.0.1");
+  await new Promise((resolve) => deviceServer.once("listening", resolve));
+  t.after(() => deviceServer.close());
+
+  const gateway = new TcpControllerGateway();
+  const controller = { id: "controller-1", host: "127.0.0.1", port: deviceServer.address().port };
+  t.after(() => gateway.disconnect(controller.id));
+  await gateway.sendFrames(controller, [{ timestamp: Date.now(), pixels: [[1, 2, 3]] }]);
+
+  for (let attempt = 0; attempt < 50 && gateway.getWifiSignal(controller.id) === null; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(gateway.getWifiSignal(controller.id), -58);
+});
+
+test("TCP gateway logs a controller outage once when it starts and once when it ends", async (t) => {
+  const logged = [];
+  t.mock.method(console, "log", (message) => logged.push(String(message)));
+
+  const probe = net.createServer().listen(0, "127.0.0.1");
+  await new Promise((resolve) => probe.once("listening", resolve));
+  const port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+
+  const gateway = new TcpControllerGateway({ connectionTimeoutMs: 1000, reconnectDelayMs: 20 });
+  const controller = { id: "controller-1", name: "Deck3", host: "127.0.0.1", port };
+  const frame = { timestamp: Date.now(), channelMask: 1, pixels: [[1, 2, 3]] };
+
+  await assert.rejects(gateway.sendFrames(controller, [frame]));
+  await assert.rejects(gateway.sendFrames(controller, [frame]));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await gateway.sendFrames(controller, [frame]).catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(logged.filter((line) => line.includes("Deck3 (127.0.0.1) unreachable: ECONNREFUSED")).length, 1);
+
+  const sockets = new Set();
+  const deviceServer = net.createServer((socket) => sockets.add(socket));
+  deviceServer.listen(port, "127.0.0.1");
+  await new Promise((resolve) => deviceServer.once("listening", resolve));
+  t.after(() => {
+    for (const serverSocket of sockets) serverSocket.destroy();
+    deviceServer.close();
+  });
+
+  for (let attempt = 0; attempt < 50 && !gateway.getStatus(controller.id).connected; attempt += 1) {
+    await gateway.sendFrames(controller, [frame]).catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(logged.filter((line) => /Deck3 \(127\.0\.0\.1\) reconnected after \d+s/.test(line)).length, 1);
 });

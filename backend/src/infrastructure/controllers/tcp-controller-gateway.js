@@ -12,6 +12,34 @@ const PIXEL_HEADER_SIZE = 24;
 // standard, uncompressed packet built by encodePixelFrame().
 const COMPRESSED_HEADER = 0x44415645; // ASCII "DAVE", read back little-endian
 const COMPRESSED_HEADER_SIZE = 16;
+// SocketServer::SendResponsePacket's SocketResponse (include/socketserver.h in
+// the firmware): a packed little-endian struct sent back once per received
+// pixel packet, size first. wifiSignal is the controller's own RSSI (dBm).
+const SOCKET_RESPONSE_SIZE = 72;
+const SOCKET_RESPONSE_WIFI_SIGNAL_OFFSET = 48;
+
+// Consumes whole SocketResponse packets from `buffer`, calling onResponse for
+// each, and returns the unconsumed tail. A size field that isn't a
+// SocketResponse means the stream is out of step, so the rest is discarded
+// rather than misread - the next packet boundary resyncs it.
+export function consumeSocketResponses(buffer, onResponse) {
+  let offset = 0;
+  while (buffer.length - offset >= 4) {
+    if (buffer.readUInt32LE(offset) !== SOCKET_RESPONSE_SIZE) {
+      return Buffer.alloc(0);
+    }
+    if (buffer.length - offset < SOCKET_RESPONSE_SIZE) break;
+    onResponse({
+      wifiSignal: buffer.readDoubleLE(offset + SOCKET_RESPONSE_WIFI_SIGNAL_OFFSET),
+    });
+    offset += SOCKET_RESPONSE_SIZE;
+  }
+  return buffer.subarray(offset);
+}
+
+function logControllerEvent(message) {
+  console.log(`${new Date().toISOString()} [controller] ${message}`);
+}
 
 export class TcpControllerGateway {
   constructor({
@@ -34,6 +62,41 @@ export class TcpControllerGateway {
     this.previewStates = new Map();
     this.audioStates = new Map();
     this.controllerStats = new Map();
+    // Latest RSSI each controller reported in its SocketResponses.
+    this.wifiSignals = new Map();
+    // Controllers currently in an outage (a connect or socket error since
+    // their last successful connect), mapped to { since, error } - only used
+    // to log each outage once, when it starts and when it ends.
+    this.outages = new Map();
+  }
+
+  describeController(controller) {
+    return `${controller.name ?? controller.id} (${controller.host})`;
+  }
+
+  recordFailure(controller, error) {
+    if (this.outages.has(controller.id)) return;
+    const reason = error?.code ?? error?.message ?? "unknown error";
+    this.outages.set(controller.id, { since: Date.now() });
+    const signal = this.wifiSignals.get(controller.id);
+    logControllerEvent(
+      `${this.describeController(controller)} unreachable: ${reason}` +
+        (signal ? `; last WiFi signal ${signal.rssi} dBm` : ""),
+    );
+  }
+
+  recordConnected(controller) {
+    const outage = this.outages.get(controller.id);
+    if (!outage) return;
+    this.outages.delete(controller.id);
+    const seconds = Math.round((Date.now() - outage.since) / 1000);
+    logControllerEvent(
+      `${this.describeController(controller)} reconnected after ${seconds}s`,
+    );
+  }
+
+  getWifiSignal(controllerId) {
+    return this.wifiSignals.get(controllerId)?.rssi ?? null;
   }
 
   // Connections are keyed per (controller, channel) rather than per controller
@@ -71,17 +134,31 @@ export class TcpControllerGateway {
     socket.setNoDelay(true);
     // The firmware sends a small SocketResponse packet back on this same
     // socket for every pixel frame it receives ("this is how it paces
-    // itself" - see NightDriverStrip's SendResponsePacket) - not currently
-    // parsed/used for pacing here, but it must be read regardless: left in
-    // Node's default paused mode (no 'data' listener), those bytes just
-    // accumulate unread.
-    socket.on("data", () => {});
+    // itself" - see NightDriverStrip's SendResponsePacket). Not used for
+    // pacing here, only for the controller's reported WiFi signal - but it
+    // must be read regardless: left in Node's default paused mode (no 'data'
+    // listener), those bytes just accumulate unread.
+    let unparsed = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      unparsed = consumeSocketResponses(
+        unparsed.length ? Buffer.concat([unparsed, chunk]) : chunk,
+        ({ wifiSignal }) => {
+          if (Number.isFinite(wifiSignal) && wifiSignal !== 0) {
+            this.wifiSignals.set(controller.id, {
+              rssi: Math.round(wifiSignal),
+              at: Date.now(),
+            });
+          }
+        },
+      );
+    });
     this.connections.set(key, socket);
     this.statuses.set(key, {
       controllerId: controller.id,
       connected: false,
     });
-    socket.on("error", () => {
+    socket.on("error", (error) => {
+      this.recordFailure(controller, error);
       if (this.connections.get(key) === socket) {
         this.connections.delete(key);
         this.statuses.set(key, {
@@ -107,14 +184,18 @@ export class TcpControllerGateway {
           controllerId: controller.id,
           connected: false,
         });
-        reject(
-          new Error(`Connection timed out for controller ${controller.id}`),
+        const error = new Error(
+          `Connection timed out for controller ${controller.id}`,
         );
+        error.code = "ETIMEDOUT";
+        this.recordFailure(controller, error);
+        reject(error);
       }, this.connectionTimeoutMs);
 
       socket.once("connect", () => {
         clearTimeout(timeout);
         this.offlineUntil.delete(key);
+        this.recordConnected(controller);
         this.statuses.set(key, {
           controllerId: controller.id,
           connected: true,
@@ -323,6 +404,7 @@ export class TcpControllerGateway {
     return {
       receivedPerSecond: state.receivedPerSecond,
       drawFps: state.drawFps,
+      wifiSignal: this.getWifiSignal(controller.id),
     };
   }
 
