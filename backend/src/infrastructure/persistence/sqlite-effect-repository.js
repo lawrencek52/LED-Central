@@ -26,6 +26,11 @@ export class SqliteEffectRepository {
         "ALTER TABLE effects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
       );
     }
+    // Frame rate the effect should play at when the caller doesn't ask for
+    // one (null = the playback default).
+    if (!columns.some((column) => column.name === "default_fps")) {
+      this.database.exec("ALTER TABLE effects ADD COLUMN default_fps INTEGER");
+    }
     this.database
       .prepare("UPDATE effects SET sort_order = rowid WHERE sort_order = 0")
       .run();
@@ -52,8 +57,8 @@ export class SqliteEffectRepository {
     this.database
       .prepare(
         `
-      INSERT INTO effects (id, name, description, renderer, parameters_json, tags_json, sort_order, created_at, updated_at)
-      VALUES (@id, @name, @description, @renderer, @parametersJson, @tagsJson, @sortOrder, @createdAt, @updatedAt)
+      INSERT INTO effects (id, name, description, renderer, parameters_json, tags_json, sort_order, default_fps, created_at, updated_at)
+      VALUES (@id, @name, @description, @renderer, @parametersJson, @tagsJson, @sortOrder, @defaultFps, @createdAt, @updatedAt)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         description = excluded.description,
@@ -61,6 +66,7 @@ export class SqliteEffectRepository {
         parameters_json = excluded.parameters_json,
         tags_json = excluded.tags_json,
         sort_order = excluded.sort_order,
+        default_fps = excluded.default_fps,
         updated_at = excluded.updated_at
     `,
       )
@@ -69,6 +75,7 @@ export class SqliteEffectRepository {
         parametersJson: JSON.stringify(effect.parameters),
         tagsJson: JSON.stringify(effect.tags),
         sortOrder: effect.sortOrder ?? 0,
+        defaultFps: effect.defaultFps ?? null,
         createdAt: effect.createdAt,
         updatedAt: effect.updatedAt,
       });
@@ -101,7 +108,8 @@ export class SqliteEffectRepository {
           JSON.stringify(existing.parameters) !==
             JSON.stringify(effect.parameters) ||
           existing.description !== effect.description ||
-          existing.renderer !== effect.renderer
+          existing.renderer !== effect.renderer ||
+          existing.defaultFps !== (effect.defaultFps ?? null)
         ) {
           // Refresh built-in definitions (e.g. parameter ranges) while
           // preserving user customizations like name and sort order.
@@ -111,6 +119,7 @@ export class SqliteEffectRepository {
             renderer: effect.renderer,
             parameters: effect.parameters,
             tags: effect.tags,
+            defaultFps: effect.defaultFps ?? null,
             updatedAt: new Date().toISOString(),
           });
         }
@@ -129,6 +138,7 @@ function toEffect(row) {
     parameters: JSON.parse(row.parameters_json),
     tags: JSON.parse(row.tags_json),
     sortOrder: row.sort_order,
+    defaultFps: row.default_fps ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

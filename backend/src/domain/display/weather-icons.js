@@ -1,3 +1,4 @@
+import { moonElongation } from "./moon-phase.js";
 import { fillCircle, hLine, line, setPixel } from "./raster.js";
 
 // Weather icons drawn procedurally from a few parts (sun or moon, cloud,
@@ -5,14 +6,18 @@ import { fillCircle, hLine, line, setPixel } from "./raster.js";
 // large current-conditions icon and small forecast icons alike - and ports to
 // the firmware as the same handful of primitives instead of a sprite sheet.
 
+// Greys keep their three channels equal: a HUB75 panel at reduced colour
+// depth quantizes each channel separately, so a slightly bluish grey can come
+// out visibly tinted (an earlier cloud colour read as magenta on the panel).
 const COLORS = {
-  sun: [255, 196, 0],
-  sunRay: [255, 140, 0],
-  moon: [215, 215, 170],
-  cloud: [190, 195, 205],
-  cloudShade: [140, 145, 160],
-  darkCloud: [105, 105, 120],
-  darkCloudShade: [75, 75, 90],
+  sun: [255, 255, 0],
+  sunRay: [255, 190, 0],
+  moon: [230, 230, 220],
+  moonDark: [55, 55, 55],
+  cloud: [128, 128, 128],
+  cloudShade: [90, 90, 90],
+  darkCloud: [80, 80, 80],
+  darkCloudShade: [55, 55, 55],
   rain: [60, 130, 255],
   freezing: [120, 230, 255],
   snow: [235, 240, 255],
@@ -38,7 +43,7 @@ const ICONS = {
   6: { sky: "sun", cloud: "partly", precip: "rain" },
   7: { sky: "sun", cloud: "partly", precip: "mix" },
   8: { sky: "sun", cloud: "partly", precip: "snow" },
-  9: { sky: "sun", cloud: "partly", bolt: true },
+  9: { sky: "sun", cloud: "partly", precip: "rain", bolt: true },
   10: { cloud: "overcast" },
   11: { cloud: "overcast", precip: "rain" },
   12: { cloud: "overcast", precip: "rain" },
@@ -67,7 +72,7 @@ const ICONS = {
   36: { sky: "moon", cloud: "partly", precip: "rain" },
   37: { sky: "moon", cloud: "partly", precip: "mix" },
   38: { sky: "moon", cloud: "partly", precip: "snow" },
-  39: { sky: "moon", cloud: "partly", bolt: true },
+  39: { sky: "moon", cloud: "partly", precip: "rain", bolt: true },
   40: { precip: "heavySnow", wind: true },
   41: { cloud: "dark", wind: true },
   42: { cloud: "dark", wind: true },
@@ -100,13 +105,32 @@ function drawSun(canvas, cx, cy, radius) {
   fillCircle(canvas, cx, cy, radius, COLORS.sun);
 }
 
-function drawMoon(canvas, cx, cy, radius) {
-  const offset = radius * 0.55;
-  fillCircle(canvas, cx, cy, radius, COLORS.moon, (px, py) => {
-    const dx = px + 0.5 - (cx + offset);
-    const dy = py + 0.5 - (cy - offset * 0.6);
-    return dx * dx + dy * dy > radius * radius * 0.75;
-  });
+// The Moon as it actually looks at `elongation` (see moon-phase.js), as seen
+// from the northern hemisphere: lit from the right while waxing, the left
+// while waning, the terminator an ellipse across the disc. The dark part is
+// drawn grey so the disc still reads as a moon, and at least one column on
+// the lit limb stays lit, so a new moon shows which side of new it's on.
+function drawMoon(canvas, cx, cy, radius, elongation) {
+  const waxing = elongation < 180;
+  const terminator = Math.cos((elongation * Math.PI) / 180);
+  const limbByRow = new Map();
+  let litCount = 0;
+  for (let py = Math.floor(cy - radius); py <= Math.ceil(cy + radius); py += 1) {
+    for (let px = Math.floor(cx - radius); px <= Math.ceil(cx + radius); px += 1) {
+      const dx = (px + 0.5 - cx) / radius;
+      const dy = (py + 0.5 - cy) / radius;
+      if (dx * dx + dy * dy > 1) continue;
+      const halfWidth = Math.sqrt(1 - dy * dy);
+      const lit = waxing ? dx > halfWidth * terminator : dx < -halfWidth * terminator;
+      if (lit) litCount += 1;
+      setPixel(canvas, px, py, lit ? COLORS.moon : COLORS.moonDark);
+      const limb = limbByRow.get(py);
+      if (limb === undefined || (waxing ? px > limb : px < limb)) limbByRow.set(py, px);
+    }
+  }
+  if (litCount === 0) {
+    for (const [py, px] of limbByRow) setPixel(canvas, px, py, COLORS.moon);
+  }
 }
 
 // A cloud filling the box (x, y, w, h): three overlapping puffs on a flat
@@ -192,9 +216,11 @@ function drawWind(canvas, x, y, w, h) {
   });
 }
 
-// Draws the icon for `iconCode` in the size x size square at (x, y).
-export function drawWeatherIcon(canvas, iconCode, x, y, size) {
+// Draws the icon for `iconCode` in the size x size square at (x, y). The
+// moon's phase is drawn for `timestamp`.
+export function drawWeatherIcon(canvas, iconCode, x, y, size, { timestamp = Date.now() } = {}) {
   const parts = weatherIconParts(iconCode);
+  const elongation = moonElongation(timestamp);
   const hasLower = Boolean(parts.precip || parts.bolt);
   const dark = parts.cloud === "dark";
 
@@ -226,7 +252,7 @@ export function drawWeatherIcon(canvas, iconCode, x, y, size) {
   if (parts.sky && !parts.cloud) {
     const radius = size * (hasLower ? 0.2 : 0.24);
     if (parts.sky === "sun") drawSun(canvas, x + size / 2, y + skyHeight / 2, radius);
-    else drawMoon(canvas, x + size / 2, y + skyHeight / 2, size * 0.32);
+    else drawMoon(canvas, x + size / 2, y + skyHeight / 2, size * 0.34, elongation);
   } else {
     if (parts.sky) {
       const peeking = parts.cloud === "mostly";
@@ -235,7 +261,7 @@ export function drawWeatherIcon(canvas, iconCode, x, y, size) {
       const cx = x + size * (peeking ? 0.33 : 0.36);
       const cy = y + size * (peeking ? 0.3 : 0.34) * scale;
       if (parts.sky === "sun") drawSun(canvas, cx, cy, radius);
-      else drawMoon(canvas, cx, cy, radius * 1.35);
+      else drawMoon(canvas, cx, cy, radius * 1.35, elongation);
     }
     const cloudBox = {
       few: [0.42, 0.5, 0.58, 0.38],
@@ -248,8 +274,16 @@ export function drawWeatherIcon(canvas, iconCode, x, y, size) {
     drawCloud(canvas, x + size * bx, y + skyHeight * by, size * bw, skyHeight * bh, dark);
   }
 
+  // Beneath the cloud: precipitation across the width, or - with lightning
+  // too - precipitation on the left and the bolt beside it on the right.
   const lowerTop = y + skyHeight * 0.88;
   const lowerHeight = y + size - lowerTop;
-  if (parts.precip) drawPrecip(canvas, x + size * 0.08, lowerTop, size * 0.84, lowerHeight, parts.precip);
-  if (parts.bolt) drawBolt(canvas, x + size * 0.2, lowerTop - 1, size * 0.6, lowerHeight + 1);
+  if (parts.precip && parts.bolt) {
+    drawPrecip(canvas, x + size * 0.04, lowerTop, size * 0.58, lowerHeight, parts.precip);
+    drawBolt(canvas, x + size * 0.55, lowerTop - 1, size * 0.4, lowerHeight + 1);
+  } else if (parts.precip) {
+    drawPrecip(canvas, x + size * 0.08, lowerTop, size * 0.84, lowerHeight, parts.precip);
+  } else if (parts.bolt) {
+    drawBolt(canvas, x + size * 0.2, lowerTop - 1, size * 0.6, lowerHeight + 1);
+  }
 }

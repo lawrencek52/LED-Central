@@ -70,10 +70,11 @@ test("parseCityPage flattens current conditions and pairs each day with the foll
     windSpeed: 12,
     windGust: 37,
   });
-  // The leading "Tonight" has no daytime period, so the days start at Friday.
+  // An evening forecast's leading "Tonight" gets a column of its own.
   assert.deepEqual(parsed.days, [
-    { day: "Friday", iconCode: 6, summary: "Chance of showers", high: 14, low: 2 },
-    { day: "Saturday", iconCode: 2, summary: "A mix of sun and cloud", high: 16, low: null },
+    { day: "Thursday", night: true, iconCode: 39, summary: "Chance of showers", high: null, low: 6 },
+    { day: "Friday", night: false, iconCode: 6, summary: "Chance of showers", high: 14, low: 2 },
+    { day: "Saturday", night: false, iconCode: 2, summary: "A mix of sun and cloud", high: 16, low: null },
   ]);
   assert.equal(parsed.sunset, "2026-10-09T22:29:00Z");
 });

@@ -34,6 +34,7 @@ export function clockParts(timestamp, timeZone) {
   const options = {
     hour: "numeric",
     minute: "2-digit",
+    second: "2-digit",
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -51,16 +52,20 @@ export function clockParts(timestamp, timeZone) {
   return {
     hour: Number(parts.hour) % 24,
     minute: parts.minute,
+    second: parts.second,
     weekday: parts.weekday,
     month: parts.month,
     day: parts.day,
   };
 }
 
-function formatTime(clock, use24Hour) {
-  if (use24Hour) return { time: `${String(clock.hour).padStart(2, "0")}:${clock.minute}`, meridiem: "" };
+function formatTime(clock, use24Hour, withSeconds = false) {
+  const seconds = withSeconds ? `:${clock.second}` : "";
+  if (use24Hour) {
+    return { time: `${String(clock.hour).padStart(2, "0")}:${clock.minute}${seconds}`, meridiem: "" };
+  }
   const hour12 = clock.hour % 12 === 0 ? 12 : clock.hour % 12;
-  return { time: `${hour12}:${clock.minute}`, meridiem: clock.hour < 12 ? "AM" : "PM" };
+  return { time: `${hour12}:${clock.minute}${seconds}`, meridiem: clock.hour < 12 ? "AM" : "PM" };
 }
 
 const degrees = (value) => (value === null || value === undefined ? "--" : `${Math.round(value)}°`);
@@ -118,7 +123,7 @@ function drawRightAligned(canvas, text, right, y, font, color) {
 }
 
 function drawHeader(canvas, clock, use24Hour, compact) {
-  const { time, meridiem } = formatTime(clock, use24Hour);
+  const { time, meridiem } = formatTime(clock, use24Hour, !compact);
   const end = drawText(canvas.pixels, canvas.width, canvas.height, time, 1, 0, FONT_5X7, COLORS.time);
   if (meridiem) drawText(canvas.pixels, canvas.width, canvas.height, meridiem, end + 2, 2, FONT_4X5, COLORS.meridiem);
   if (compact) {
@@ -128,15 +133,17 @@ function drawHeader(canvas, clock, use24Hour, compact) {
   }
 }
 
-function drawForecastColumns(canvas, days, top, columnCount) {
+function drawForecastColumns(canvas, days, top, columnCount, timestamp) {
   const columnWidth = Math.floor(canvas.width / columnCount);
   const left = Math.floor((canvas.width - columnWidth * columnCount) / 2);
   days.slice(0, columnCount).forEach((day, index) => {
     const centerX = left + columnWidth * index + columnWidth / 2;
-    const name = WEEKDAYS.find((weekday) => day.day.toUpperCase().startsWith(weekday)) ?? day.day.slice(0, 3);
+    const name = day.night
+      ? "NITE"
+      : (WEEKDAYS.find((weekday) => day.day.toUpperCase().startsWith(weekday)) ?? day.day.slice(0, 3));
     drawCentered(canvas, name, centerX, top, FONT_4X5, COLORS.dayName);
-    drawWeatherIcon(canvas, day.iconCode, Math.round(centerX - 6), top + 6, 12);
-    drawCentered(canvas, degrees(day.high), centerX + 1, top + 19, FONT_4X5, COLORS.high);
+    drawWeatherIcon(canvas, day.iconCode, Math.round(centerX - 6), top + 6, 12, { timestamp });
+    if (day.high !== null) drawCentered(canvas, degrees(day.high), centerX + 1, top + 19, FONT_4X5, COLORS.high);
     if (day.low !== null) drawCentered(canvas, degrees(day.low), centerX + 1, top + 25, FONT_4X5, COLORS.low);
   });
 }
@@ -174,7 +181,7 @@ export function renderWeatherForecast({ width, height, parameters, timestamp }) 
   }
 
   const current = data.current;
-  drawWeatherIcon(canvas, current.iconCode, compact ? 0 : 1, 9, 16);
+  drawWeatherIcon(canvas, current.iconCode, compact ? 0 : 1, 9, 16, { timestamp });
   // The number at double size, its degree sign at normal size beside it.
   const temperature = current.temperature === null ? "--" : String(Math.round(current.temperature));
   let temperatureEnd = drawText(
@@ -189,7 +196,7 @@ export function renderWeatherForecast({ width, height, parameters, timestamp }) 
       canvas.pixels, canvas.width, canvas.height,
       shortenToFit(current.condition, FONT_4X5, width - 2), 1, 27, FONT_4X5, COLORS.condition,
     );
-    drawForecastColumns(canvas, data.days, 34, Math.max(1, Math.floor(width / 21)));
+    drawForecastColumns(canvas, data.days, 34, Math.max(1, Math.floor(width / 21)), timestamp);
   } else {
     const textLeft = Math.max(temperatureEnd + 4, 50);
     const textWidthAvailable = width - textLeft - 1;
@@ -207,7 +214,7 @@ export function renderWeatherForecast({ width, height, parameters, timestamp }) 
     const sunEvent = nextSunEvent(data, timestamp, parameters.timeZone, Boolean(parameters.use24Hour));
     if (sunEvent) drawRightAligned(canvas, sunEvent, width - 1, 26, FONT_4X5, COLORS.detail);
     for (let x = 1; x < width - 1; x += 1) canvas.pixels[32 * width + x] = COLORS.divider;
-    drawForecastColumns(canvas, data.days, 34, Math.max(1, Math.floor(width / 25)));
+    drawForecastColumns(canvas, data.days, 34, Math.max(1, Math.floor(width / 25)), timestamp);
   }
   return canvas.pixels;
 }

@@ -60,14 +60,25 @@ export function parseCityPage(feature) {
   });
 
   // Daily columns: each daytime period, with the low from the night that
-  // follows it. A leading "Tonight" has no daytime period left to pair with;
-  // the current conditions already cover it.
+  // follows it. A leading "Tonight" (an evening forecast) has no daytime
+  // period left to pair with, so it gets a column of its own.
   const days = [];
+  if (periods[0]?.night) {
+    days.push({
+      day: periods[0].day,
+      night: true,
+      iconCode: periods[0].iconCode,
+      summary: periods[0].summary,
+      high: null,
+      low: periods[0].temperature,
+    });
+  }
   periods.forEach((period, index) => {
     if (period.night) return;
     const next = periods[index + 1];
     days.push({
       day: period.day,
+      night: false,
       iconCode: period.iconCode,
       summary: period.summary,
       high: period.temperature,

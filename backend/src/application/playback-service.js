@@ -80,7 +80,8 @@ export class PlaybackService {
       // reading should be tolerated instead of failing the render tick.
       return Math.min(60, Math.max(1, measured));
     }
-    return fps === undefined ? this.frameRate : this.normalizeFrameRate(fps);
+    if (fps !== undefined) return this.normalizeFrameRate(fps);
+    return effect?.defaultFps ? this.normalizeFrameRate(effect.defaultFps) : this.frameRate;
   }
 
   list() {

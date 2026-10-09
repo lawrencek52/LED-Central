@@ -50,7 +50,9 @@ function EffectSelector({
     const stored = Number(
       window.localStorage.getItem(`led-central.fps.${currentEffect.id}`),
     );
-    return Number.isInteger(stored) && stored >= 1 && stored <= 60 ? stored : 20;
+    return Number.isInteger(stored) && stored >= 1 && stored <= 60
+      ? stored
+      : (currentEffect.defaultFps ?? 20);
   }
 
   useEffect(() => {

@@ -50,6 +50,7 @@ test("clockParts reports wall-clock time in the requested time zone", () => {
   assert.deepEqual(clockParts(timestamp, "America/Toronto"), {
     hour: 21,
     minute: "07",
+    second: "00",
     weekday: "Thu",
     month: "Oct",
     day: "8",

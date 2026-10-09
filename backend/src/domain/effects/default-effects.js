@@ -105,8 +105,10 @@ export const defaultEffects = [
     id: "weather-forecast",
     name: "Weather Forecast",
     description:
-      "Time, date, current conditions and a daily forecast for a Canadian postal code, from Environment Canada's weather.gc.ca (no API key). Built for HUB75 matrices: 128 wide shows five days with wind, humidity and sunrise/sunset; 64x64 shows three days. A low frame rate (2-5 FPS) is plenty.",
+      "Time, date, current conditions and a daily forecast for a Canadian postal code, from Environment Canada's weather.gc.ca (no API key). Built for HUB75 matrices: 128 wide shows five days with wind, humidity and sunrise/sunset; 64x64 shows three days.",
     renderer: "weather-forecast",
+    // The display changes at most once a second (the 128-wide clock's seconds).
+    defaultFps: 1,
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
       postalCode: { type: "string", default: "K2L" },
