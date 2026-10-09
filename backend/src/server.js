@@ -18,6 +18,7 @@ import { createPlaybackRouter } from "./api/playback.js";
 import { EffectRenderService } from "./application/effect-render-service.js";
 import { PlaybackService } from "./application/playback-service.js";
 import { CanvasAudioService } from "./application/canvas-audio-service.js";
+import { WeatherService } from "./application/weather-service.js";
 import { createCanvasRouter } from "./api/canvases.js";
 import { CanvasService } from "./application/canvas-service.js";
 import { SqliteControllerRepository } from "./infrastructure/persistence/sqlite-controller-repository.js";
@@ -63,6 +64,7 @@ export function createApp({
     databasePath: config.effectDatabasePath,
   }),
   audioService = new CanvasAudioService({ telemetrySource: gateway }),
+  weatherService = new WeatherService(),
 } = {}) {
   const app = express();
   app.locals.eventHub = eventHub;
@@ -84,6 +86,7 @@ export function createApp({
       eventHub,
       playbackRepository,
       audioService,
+      weatherService,
     });
   app.locals.metrics = metrics;
 

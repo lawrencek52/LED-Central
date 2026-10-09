@@ -15,6 +15,7 @@ export class PlaybackService {
     frameRate = 20,
     targetQueueMs = 1500,
     audioService = null,
+    weatherService = null,
     audioQueueFrames = 2,
     maxCatchUpFrames = 4,
   }) {
@@ -30,6 +31,7 @@ export class PlaybackService {
     this.frameRate = frameRate;
     this.targetQueueMs = targetQueueMs;
     this.audioService = audioService;
+    this.weatherService = weatherService;
     this.audioQueueFrames = audioQueueFrames;
     this.maxCatchUpFrames = maxCatchUpFrames;
     this.sessions = new Map();
@@ -224,6 +226,13 @@ export class PlaybackService {
       (this.usesAudioIfAvailable(effect) && this.audioService?.hasAudioCapability(canvas))
     ) {
       effectParameters.audio = this.audioService.getCanvasAudio(canvas);
+    }
+    // Weather-tagged effects get the cached forecast for their postal code
+    // as `parameters.weather` (WeatherService refreshes it in the background).
+    if (this.weatherService && effect.tags?.includes("weather")) {
+      effectParameters.weather = this.weatherService.getWeather(
+        parameters.postalCode ?? effect.parameters?.postalCode?.default,
+      );
     }
     return this.renderService.render({
       effect,

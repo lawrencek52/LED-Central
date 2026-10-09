@@ -8,6 +8,7 @@ const PARAMETER_TYPES = new Set([
   "palette",
   "string",
   "array",
+  "select",
 ]);
 
 // Validates the persisted database against what the running code supports,

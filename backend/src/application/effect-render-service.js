@@ -1,3 +1,5 @@
+import { renderWeatherForecast } from "../domain/effects/weather-forecast-renderer.js";
+
 export class EffectRenderError extends Error {
   constructor(message, statusCode = 400) {
     super(message);
@@ -629,6 +631,7 @@ const renderers = {
     }
     return pixels;
   },
+  "weather-forecast": renderWeatherForecast,
   "stock-banner": ({ width, height, parameters, timestamp }) => {
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
     const symbols =
