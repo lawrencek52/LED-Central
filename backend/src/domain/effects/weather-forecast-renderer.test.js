@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FONT_4X5, FONT_5X7 } from "../display/bitmap-fonts.js";
-import { activeAlerts, clockParts, renderWeatherForecast } from "./weather-forecast-renderer.js";
+import { activeAlerts, clockParts, renderWeatherForecast, sunEventToShow } from "./weather-forecast-renderer.js";
 
 const weather = {
   status: "ok",
@@ -117,4 +117,22 @@ test("an active alert replaces the furthest forecast columns with a box in its c
   assert.deepEqual(bottomRight, [255, 0, 0]);
   const without = renderWeatherForecast({ width, height: 64, parameters: { weather, timeZone: "America/Toronto" }, timestamp });
   assert.notDeepEqual(without[63 * width + 120], [255, 0, 0]);
+});
+
+test("the sun event shown rolls over an hour after each sunrise and sunset", () => {
+  const data = { location: [-75.8753, 45.3138] };
+  const at = (local) => sunEventToShow(data, Date.parse(`${local}-04:00`), "America/Toronto");
+  const shown = (local) => {
+    const event = at(local);
+    const time = new Date(event.at).toLocaleTimeString("en-CA", { timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+    return `${event.label} ${new Date(event.at).toISOString().slice(0, 10)} ${time}`;
+  };
+  // Today's sunrise (07:10) shows from midnight until an hour after it...
+  assert.equal(shown("2026-10-08T00:30:00"), "RISE 2026-10-08 07:10");
+  assert.equal(shown("2026-10-08T08:05:00"), "RISE 2026-10-08 07:10");
+  // ...then today's sunset (18:31) until an hour after that...
+  assert.equal(shown("2026-10-08T08:15:00"), "SET 2026-10-08 18:31");
+  assert.equal(shown("2026-10-08T19:25:00"), "SET 2026-10-08 18:31");
+  // ...then tomorrow's sunrise.
+  assert.equal(shown("2026-10-08T19:40:00"), "RISE 2026-10-09 07:11");
 });

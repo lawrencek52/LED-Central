@@ -117,17 +117,39 @@ function localIsoDate(timestamp, timeZone) {
   }
 }
 
-// Today's sunrise and sunset (as weather.gc.ca shows them), for the postal
-// code's own location; the city page's times are the fallback.
-export function todaysSunTimes(data, timestamp, timeZone) {
+// Sunrise/sunset for a local calendar date, at the postal code's own
+// location (weather.gc.ca's times are for the forecast city's reference
+// point, a minute or so off).
+function sunTimesOn(date, data) {
   const [longitude, latitude] = data.location ?? [];
-  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-    const times = sunTimes(localIsoDate(timestamp, timeZone), latitude, longitude);
-    if (times) return times;
-  }
-  const sunrise = Date.parse(data.sunrise);
-  const sunset = Date.parse(data.sunset);
-  return Number.isFinite(sunrise) && Number.isFinite(sunset) ? { sunrise, sunset } : null;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return sunTimes(date, latitude, longitude);
+}
+
+const nextIsoDate = (date) => new Date(Date.parse(`${date}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+
+// How long a sunrise or sunset stays on screen after it happens before the
+// display moves on to the next one.
+const SUN_EVENT_LINGER_MS = 60 * 60 * 1000;
+
+// The sun event to show: today's sunrise until an hour after it, then
+// today's sunset until an hour after that, then tomorrow's sunrise. Falls
+// back to the city page's times when the postal code's location is unknown.
+export function sunEventToShow(data, timestamp, timeZone) {
+  const today = localIsoDate(timestamp, timeZone);
+  const todays = sunTimesOn(today, data);
+  const tomorrows = sunTimesOn(nextIsoDate(today), data);
+  const events = todays && tomorrows
+    ? [
+        { label: "RISE", at: todays.sunrise },
+        { label: "SET", at: todays.sunset },
+        { label: "RISE", at: tomorrows.sunrise },
+      ]
+    : [
+        { label: "RISE", at: Date.parse(data.sunrise) },
+        { label: "SET", at: Date.parse(data.sunset) },
+      ].filter((event) => Number.isFinite(event.at)).sort((x, y) => x.at - y.at);
+  return events.find((event) => event.at + SUN_EVENT_LINGER_MS > timestamp) ?? events[events.length - 1] ?? null;
 }
 
 // The alerts still in effect at `timestamp`, most severe first.
@@ -287,13 +309,12 @@ export function renderWeatherForecast({ width, height, parameters, timestamp }) 
     if (current.humidity !== null) {
       drawText(canvas.pixels, canvas.width, canvas.height, `HUM ${Math.round(current.humidity)}%`, textLeft, 26, FONT_4X5, COLORS.detail);
     }
-    const sun = todaysSunTimes(data, timestamp, parameters.timeZone);
-    if (sun) {
-      const format = (at) => formatTime(clockParts(at, parameters.timeZone), Boolean(parameters.use24Hour)).time;
-      const sunset = `↓${format(sun.sunset)}`;
-      drawRightAligned(canvas, sunset, width - 1, 26, FONT_4X5, COLORS.sunset);
+    const sunEvent = sunEventToShow(data, timestamp, parameters.timeZone);
+    if (sunEvent) {
+      const { time } = formatTime(clockParts(sunEvent.at, parameters.timeZone), Boolean(parameters.use24Hour));
       drawRightAligned(
-        canvas, `↑${format(sun.sunrise)}`, width - 1 - textWidth(sunset, FONT_4X5) - 4, 26, FONT_4X5, COLORS.sunrise,
+        canvas, `${sunEvent.label} ${time}`, width - 1, 26, FONT_4X5,
+        sunEvent.label === "RISE" ? COLORS.sunrise : COLORS.sunset,
       );
     }
     for (let x = 1; x < width - 1; x += 1) canvas.pixels[32 * width + x] = COLORS.divider;
