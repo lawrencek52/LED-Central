@@ -2779,7 +2779,7 @@ function setPixelAllColumns(pixels, width, height, y, color) {
 // in different cool/mid colors for the same three-segment shape.
 const FIRE_HEAT_RAMPS = {
   red: { cool: [255, 0, 0], mid: [255, 255, 0] },
-  green: { cool: [0, 255, 0], mid: [255, 0, 255] },
+  green: { cool: [0, 255, 0], mid: [255, 255, 0] },
   blue: { cool: [0, 0, 255], mid: [0, 255, 255] },
 };
 
