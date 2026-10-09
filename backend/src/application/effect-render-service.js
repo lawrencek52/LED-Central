@@ -918,15 +918,18 @@ const renderers = {
     // Position along the flame axis's simulated (possibly supersampled)
     // buffer, after `reversed` has been applied. axisPos runs from the
     // flame's cool tip (0) to its hot, spark-fed base (flameAxisSimSize-1),
-    // so on a matrix its "ascend progress" (matrixAscendToY's own
-    // convention, 0 = ground) is the axis run in reverse: unreversed (the
-    // default) burns upward from the physical bottom. A strip/parallel
-    // canvas has no such flip - which end of the strip is the ground is the
-    // canvas mapping's own `reversed`, a fact about the wiring.
-    const flameAxisIndex = (pos) =>
-      isMatrix
-        ? matrixAscendToY(flameAxisSimSize - 1 - pos, flameAxisSimSize, upIsPositiveY)
-        : pos;
+    // so its "ascend progress" (0 = the base) is the axis run in reverse.
+    // Unreversed (the default), that base is LED 0 on a strip - the end
+    // nearest the controller - and the physical bottom on a matrix
+    // (matrixAscendToY). A parallel mapping's own `reversed` can't stand in
+    // for this: it flips the strip's place on the canvas and its LED order
+    // together, which cancel out on the strip itself.
+    const flameAxisIndex = (pos) => {
+      const ascendPos = flameAxisSimSize - 1 - pos;
+      return isMatrix
+        ? matrixAscendToY(ascendPos, flameAxisSimSize, upIsPositiveY)
+        : ascendPos;
+    };
 
     const simWidth = isMatrix ? laneAxisSize : flameAxisSimSize;
     const simHeight = isMatrix ? flameAxisSimSize : laneAxisSize;

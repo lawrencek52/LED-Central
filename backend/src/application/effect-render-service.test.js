@@ -598,7 +598,7 @@ function fireParameters(overrides = {}) {
     sparking: { default: 100 },
     sparks: { default: 3 },
     sparkHeight: { default: 4 },
-    reversed: { default: true },
+    reversed: { default: false },
     mirrored: { default: false },
     minHeightFraction: { default: 0.2 },
     averageHeightFraction: { default: 0.7 },
@@ -627,9 +627,9 @@ test("fire stays within its configured height ceiling and doesn't light the far 
       canvas: { width, height: 1 },
       parameters: { timeSeconds },
     });
-    // The ceiling sits at 50% of the strip; the far end (display index 0 is
-    // the source, since `reversed` puts it at the strip's start) is far
-    // beyond the ceiling plus its falloff, so it must stay unlit.
+    // The ceiling sits at 50% of the strip; the far end (display index 0,
+    // nearest the controller, is the source when unreversed) is far beyond
+    // the ceiling plus its falloff, so it must stay unlit.
     assert.deepEqual(frame.pixels[farIndex], [0, 0, 0]);
   }
 });
@@ -687,6 +687,51 @@ test("fire's palette parameter recolors the heat ramp", () => {
     "expected some pure-green cool cells",
   );
   assert.deepEqual(renderWith("unknown"), red);
+});
+
+test("fire burns from LED 0 of each parallel strip when not reversed, whatever the mapping's own reversed", () => {
+  const service = new EffectRenderService();
+  const width = 120;
+  const capped = fireParameters({
+    minHeightFraction: { default: 0.4 },
+    averageHeightFraction: { default: 0.4 },
+    maxHeightFraction: { default: 0.4 },
+  });
+  const brightness = (pixels) =>
+    pixels.reduce((sum, [r, g, b]) => sum + r + g + b, 0);
+  for (const mappingReversed of [false, true]) {
+    const canvas = {
+      width,
+      height: 1,
+      mappings: [
+        {
+          controllerId: "c1",
+          stripIndex: 0,
+          layout: "parallel",
+          x: 0,
+          y: 0,
+          width,
+          height: 1,
+          reversed: mappingReversed,
+        },
+      ],
+    };
+    let start = 0;
+    let end = 0;
+    for (const timeSeconds of [3, 7.5, 12, 30]) {
+      const frame = service.render({
+        effect: { renderer: "fire", parameters: capped },
+        canvas,
+        parameters: { timeSeconds },
+      });
+      // Canvas order -> LED order, the way the canvas mapping sends it.
+      const leds = mappingReversed ? [...frame.pixels].reverse() : frame.pixels;
+      start += brightness(leds.slice(0, 10));
+      end += brightness(leds.slice(-10));
+    }
+    assert.ok(start > 0, `mapping reversed=${mappingReversed}: LED 0 end should be lit`);
+    assert.equal(end, 0, `mapping reversed=${mappingReversed}: far end should stay dark`);
+  }
 });
 
 test("fire blends neighboring rows together when neighborBlend is enabled", () => {
