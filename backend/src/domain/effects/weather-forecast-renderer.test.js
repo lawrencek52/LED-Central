@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FONT_4X5, FONT_5X7 } from "../display/bitmap-fonts.js";
-import { clockParts, renderWeatherForecast } from "./weather-forecast-renderer.js";
+import { activeAlerts, clockParts, renderWeatherForecast } from "./weather-forecast-renderer.js";
 
 const weather = {
   status: "ok",
@@ -89,4 +89,32 @@ test("weather-forecast shows a message instead of data while loading", () => {
   });
   assert.ok(lit(loading) > 0);
   assert.ok(lit(loading) < lit(withData));
+});
+
+test("activeAlerts drops expired alerts and puts the most severe first", () => {
+  const data = {
+    alerts: [
+      { type: "statement", description: "SPECIAL WEATHER STATEMENT", expiresAt: "2026-10-10T00:00:00Z" },
+      { type: "watch", description: "SEVERE THUNDERSTORM WATCH", expiresAt: "2026-10-01T00:00:00Z" },
+      { type: "warning", description: "EXTREME COLD WARNING", expiresAt: null },
+    ],
+  };
+  assert.deepEqual(
+    activeAlerts(data, timestamp).map((alert) => alert.type),
+    ["warning", "statement"],
+  );
+});
+
+test("an active alert replaces the furthest forecast columns with a box in its colour", () => {
+  const withAlert = {
+    ...weather,
+    data: { ...weather.data, alerts: [{ type: "warning", description: "SEVERE THUNDERSTORM WARNING", expiresAt: null }] },
+  };
+  const width = 128;
+  const pixels = renderWeatherForecast({ width, height: 64, parameters: { weather: withAlert, timeZone: "America/Toronto" }, timestamp });
+  // The box's border runs along the bottom row of the last two columns.
+  const bottomRight = pixels[63 * width + 120];
+  assert.deepEqual(bottomRight, [255, 0, 0]);
+  const without = renderWeatherForecast({ width, height: 64, parameters: { weather, timeZone: "America/Toronto" }, timestamp });
+  assert.notDeepEqual(without[63 * width + 120], [255, 0, 0]);
 });

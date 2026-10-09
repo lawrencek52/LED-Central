@@ -190,11 +190,23 @@ function drawPrecip(canvas, x, y, w, h, kind) {
   }
 }
 
+// A simple sawtooth bolt on whole pixels (anti-aliased diagonals come out
+// ragged at this size): one pixel per row stepping down-left, a three-pixel
+// jog back to the right, then down-left again.
 function drawBolt(canvas, x, y, w, h) {
-  const midX = x + w / 2;
-  line(canvas, midX + w * 0.15, y, midX - w * 0.1, y + h * 0.5, COLORS.bolt);
-  line(canvas, midX - w * 0.1, y + h * 0.5, midX + w * 0.12, y + h * 0.5, COLORS.bolt);
-  line(canvas, midX + w * 0.12, y + h * 0.5, midX - w * 0.12, y + h, COLORS.bolt);
+  const top = Math.round(y);
+  const rows = Math.max(4, Math.round(h));
+  const jogRow = Math.floor((rows - 1) / 2);
+  const start = Math.round(x + w / 2) + 1;
+  for (let row = 0; row < rows; row += 1) {
+    if (row < jogRow) {
+      setPixel(canvas, start - row, top + row, COLORS.bolt);
+    } else if (row === jogRow) {
+      hLine(canvas, start - jogRow, start - jogRow + 2, top + row, COLORS.bolt);
+    } else {
+      setPixel(canvas, start - jogRow + 1 - (row - jogRow - 1), top + row, COLORS.bolt);
+    }
+  }
 }
 
 function drawFog(canvas, x, y, w, h) {

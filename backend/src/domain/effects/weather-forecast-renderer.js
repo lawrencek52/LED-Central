@@ -1,5 +1,6 @@
 import { FONT_4X5, FONT_5X7, drawText, fitText, textWidth } from "../display/bitmap-fonts.js";
 import { createCanvas } from "../display/raster.js";
+import { sunTimes } from "../display/sun-times.js";
 import { drawWeatherIcon } from "../display/weather-icons.js";
 
 // Weather display for HUB75-sized matrices: time and date, current
@@ -24,7 +25,20 @@ const COLORS = {
   low: [90, 160, 255],
   message: [180, 180, 180],
   divider: [35, 35, 45],
+  sunrise: [255, 200, 0],
+  sunset: [255, 120, 40],
+  alertText: [255, 255, 255],
 };
+
+// Alert boxes follow weather.gc.ca's colours: red warnings, yellow watches,
+// grey advisories and statements. Most severe first.
+const ALERT_STYLES = {
+  warning: { label: "WARNING", border: [255, 0, 0], fill: [50, 0, 0], rank: 0 },
+  watch: { label: "WATCH", border: [255, 200, 0], fill: [45, 35, 0], rank: 1 },
+  advisory: { label: "ADVISORY", border: [128, 128, 128], fill: [25, 25, 25], rank: 2 },
+  statement: { label: "STATEMENT", shortLabel: "NOTICE", border: [128, 128, 128], fill: [25, 25, 25], rank: 3 },
+};
+const ALERT_CYCLE_MS = 5000;
 
 const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
@@ -93,18 +107,71 @@ function shortenToFit(text, font, maxWidth) {
   return fitText(value, font, maxWidth);
 }
 
-// The next sunrise or sunset after `timestamp`, as e.g. "SET 6:29".
-function nextSunEvent(data, timestamp, timeZone, use24Hour) {
-  const events = [
-    ["RISE", Date.parse(data.sunrise)],
-    ["SET", Date.parse(data.sunset)],
-  ]
-    .filter(([, at]) => Number.isFinite(at) && at > timestamp)
-    .sort((a, b) => a[1] - b[1]);
-  if (!events.length) return "";
-  const [label, at] = events[0];
-  const { time } = formatTime(clockParts(at, timeZone), use24Hour);
-  return `${label} ${time}`;
+// Local calendar date of `timestamp` as "YYYY-MM-DD".
+function localIsoDate(timestamp, timeZone) {
+  const options = { year: "numeric", month: "2-digit", day: "2-digit" };
+  try {
+    return new Intl.DateTimeFormat("en-CA", { ...options, timeZone: timeZone || undefined }).format(timestamp);
+  } catch {
+    return new Intl.DateTimeFormat("en-CA", options).format(timestamp);
+  }
+}
+
+// Today's sunrise and sunset (as weather.gc.ca shows them), for the postal
+// code's own location; the city page's times are the fallback.
+export function todaysSunTimes(data, timestamp, timeZone) {
+  const [longitude, latitude] = data.location ?? [];
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    const times = sunTimes(localIsoDate(timestamp, timeZone), latitude, longitude);
+    if (times) return times;
+  }
+  const sunrise = Date.parse(data.sunrise);
+  const sunset = Date.parse(data.sunset);
+  return Number.isFinite(sunrise) && Number.isFinite(sunset) ? { sunrise, sunset } : null;
+}
+
+// The alerts still in effect at `timestamp`, most severe first.
+export function activeAlerts(data, timestamp) {
+  return (data.alerts ?? [])
+    .filter((alert) => !alert.expiresAt || Date.parse(alert.expiresAt) > timestamp)
+    .sort((a, b) => (ALERT_STYLES[a.type]?.rank ?? 9) - (ALERT_STYLES[b.type]?.rank ?? 9));
+}
+
+// Words of `text` wrapped into lines no wider than `maxWidth`, shortening
+// any single word that can't fit on a line of its own.
+function wrapText(text, font, maxWidth) {
+  const lines = [];
+  for (const rawWord of String(text).split(/\s+/).filter(Boolean)) {
+    const word = shortenToFit(rawWord.replace(/THUNDERSTORM/i, "T-STORM"), font, maxWidth);
+    const candidate = lines.length ? `${lines[lines.length - 1]} ${word}` : word;
+    if (lines.length && textWidth(candidate, font) <= maxWidth) lines[lines.length - 1] = candidate;
+    else lines.push(word);
+  }
+  return lines;
+}
+
+// An alert box over the area (x, y, w, h): a border in the alert's colour,
+// its type as a heading, and the description (without the type word).
+function drawAlert(canvas, alert, x, y, w, h) {
+  const style = ALERT_STYLES[alert.type] ?? ALERT_STYLES.statement;
+  for (let py = y; py < y + h; py += 1) {
+    for (let px = x; px < x + w; px += 1) {
+      const edge = py === y || py === y + h - 1 || px === x || px === x + w - 1;
+      if (px >= 0 && px < canvas.width && py >= 0 && py < canvas.height) {
+        canvas.pixels[py * canvas.width + px] = edge ? style.border : style.fill;
+      }
+    }
+  }
+  const inner = w - 4;
+  const heading = textWidth(style.label, FONT_4X5) <= inner ? style.label : (style.shortLabel ?? style.label);
+  drawCentered(canvas, heading, x + w / 2, y + 2, FONT_4X5, style.border);
+  const body = alert.description.replace(new RegExp(`\\s*\\b${style.label}\\b`, "i"), "").trim() || alert.description;
+  const maxLines = Math.floor((h - 9) / 7);
+  wrapText(body.toUpperCase(), FONT_4X5, inner)
+    .slice(0, maxLines)
+    .forEach((line, index) => {
+      drawCentered(canvas, line, x + w / 2, y + 9 + index * 7, FONT_4X5, COLORS.alertText);
+    });
 }
 
 function windText(current) {
@@ -133,10 +200,18 @@ function drawHeader(canvas, clock, use24Hour, compact) {
   }
 }
 
-function drawForecastColumns(canvas, days, top, columnCount, timestamp) {
+// Forecast columns, with the furthest `alertColumns` of them given over to
+// the current alert (cycling through several) when there is one.
+function drawForecastColumns(canvas, days, top, columnCount, timestamp, alerts = []) {
   const columnWidth = Math.floor(canvas.width / columnCount);
   const left = Math.floor((canvas.width - columnWidth * columnCount) / 2);
-  days.slice(0, columnCount).forEach((day, index) => {
+  const alertColumns = alerts.length ? Math.min(2, columnCount) : 0;
+  if (alertColumns) {
+    const alert = alerts[Math.floor(timestamp / ALERT_CYCLE_MS) % alerts.length];
+    const alertLeft = left + columnWidth * (columnCount - alertColumns);
+    drawAlert(canvas, alert, alertLeft, top, canvas.width - alertLeft, canvas.height - top);
+  }
+  days.slice(0, columnCount - alertColumns).forEach((day, index) => {
     const centerX = left + columnWidth * index + columnWidth / 2;
     const name = day.night
       ? "NITE"
@@ -181,6 +256,7 @@ export function renderWeatherForecast({ width, height, parameters, timestamp }) 
   }
 
   const current = data.current;
+  const alerts = activeAlerts(data, timestamp);
   drawWeatherIcon(canvas, current.iconCode, compact ? 0 : 1, 9, 16, { timestamp });
   // The number at double size, its degree sign at normal size beside it.
   const temperature = current.temperature === null ? "--" : String(Math.round(current.temperature));
@@ -196,7 +272,7 @@ export function renderWeatherForecast({ width, height, parameters, timestamp }) 
       canvas.pixels, canvas.width, canvas.height,
       shortenToFit(current.condition, FONT_4X5, width - 2), 1, 27, FONT_4X5, COLORS.condition,
     );
-    drawForecastColumns(canvas, data.days, 34, Math.max(1, Math.floor(width / 21)), timestamp);
+    drawForecastColumns(canvas, data.days, 34, Math.max(1, Math.floor(width / 21)), timestamp, alerts);
   } else {
     const textLeft = Math.max(temperatureEnd + 4, 50);
     const textWidthAvailable = width - textLeft - 1;
@@ -211,10 +287,17 @@ export function renderWeatherForecast({ width, height, parameters, timestamp }) 
     if (current.humidity !== null) {
       drawText(canvas.pixels, canvas.width, canvas.height, `HUM ${Math.round(current.humidity)}%`, textLeft, 26, FONT_4X5, COLORS.detail);
     }
-    const sunEvent = nextSunEvent(data, timestamp, parameters.timeZone, Boolean(parameters.use24Hour));
-    if (sunEvent) drawRightAligned(canvas, sunEvent, width - 1, 26, FONT_4X5, COLORS.detail);
+    const sun = todaysSunTimes(data, timestamp, parameters.timeZone);
+    if (sun) {
+      const format = (at) => formatTime(clockParts(at, parameters.timeZone), Boolean(parameters.use24Hour)).time;
+      const sunset = `↓${format(sun.sunset)}`;
+      drawRightAligned(canvas, sunset, width - 1, 26, FONT_4X5, COLORS.sunset);
+      drawRightAligned(
+        canvas, `↑${format(sun.sunrise)}`, width - 1 - textWidth(sunset, FONT_4X5) - 4, 26, FONT_4X5, COLORS.sunrise,
+      );
+    }
     for (let x = 1; x < width - 1; x += 1) canvas.pixels[32 * width + x] = COLORS.divider;
-    drawForecastColumns(canvas, data.days, 34, Math.max(1, Math.floor(width / 25)), timestamp);
+    drawForecastColumns(canvas, data.days, 34, Math.max(1, Math.floor(width / 25)), timestamp, alerts);
   }
   return canvas.pixels;
 }

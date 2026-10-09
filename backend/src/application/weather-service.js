@@ -103,6 +103,14 @@ export function parseCityPage(feature) {
     days,
     sunrise: en(properties.riseSet?.sunrise) ?? null,
     sunset: en(properties.riseSet?.sunset) ?? null,
+    // Active alerts for the city (warnings, watches, advisories, statements).
+    alerts: (properties.warnings ?? [])
+      .map((warning) => ({
+        type: String(en(warning.type) ?? "").toLowerCase(),
+        description: String(en(warning.description) ?? ""),
+        expiresAt: en(warning.expiryTime) ?? null,
+      }))
+      .filter((alert) => alert.description && alert.type !== "ended" && !/\bENDED\b/i.test(alert.description)),
   };
 }
 
@@ -161,7 +169,9 @@ export class WeatherService {
       const feature = await this.fetchJson(
         `${CITY_PAGE_URL}/${encodeURIComponent(state.cityId)}?f=json&lang=en`,
       );
-      state.data = parseCityPage(feature);
+      // The postal code's own location, for sunrise/sunset at the display
+      // rather than at the forecast city's reference point.
+      state.data = { ...parseCityPage(feature), location: state.location };
       state.error = null;
       state.nextRefreshAt = this.now() + this.refreshMs;
     } catch (error) {

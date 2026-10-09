@@ -42,6 +42,14 @@ function cityFeature() {
           period("Saturday", "Saturday", 2, "A mix of sun and cloud", 16, "high"),
         ],
       },
+      warnings: [
+        {
+          type: bilingual("warning"),
+          description: bilingual("SEVERE THUNDERSTORM WARNING"),
+          expiryTime: bilingual("2026-10-09T13:43:40Z"),
+        },
+        { type: bilingual("ended"), description: bilingual("HEAT WARNING ENDED") },
+      ],
       riseSet: {
         sunrise: bilingual("2026-10-09T11:11:00Z"),
         sunset: bilingual("2026-10-09T22:29:00Z"),
@@ -77,6 +85,9 @@ test("parseCityPage flattens current conditions and pairs each day with the foll
     { day: "Saturday", night: false, iconCode: 2, summary: "A mix of sun and cloud", high: 16, low: null },
   ]);
   assert.equal(parsed.sunset, "2026-10-09T22:29:00Z");
+  assert.deepEqual(parsed.alerts, [
+    { type: "warning", description: "SEVERE THUNDERSTORM WARNING", expiresAt: "2026-10-09T13:43:40Z" },
+  ]);
 });
 
 function fakeFetch(routes) {
