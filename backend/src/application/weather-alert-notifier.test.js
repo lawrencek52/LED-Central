@@ -39,7 +39,23 @@ test("a new alert rings the controllers showing a weather effect for that postal
     gateway.rings.map((ring) => ring.controllerId).sort(),
     ["m128", "m64"],
   );
-  assert.ok(gateway.rings.every((ring) => ring.seconds === 12));
+  assert.ok(gateway.rings.every((ring) => ring.seconds === 12 && ring.volume === 100));
+});
+
+test("alert rings use each session's alert volume, and a test rings a whole canvas once", async () => {
+  const { notifier, gateway } = notifierWith([
+    { status: "playing", effectId: "weather-forecast", canvasId: "big", parameters: { alertVolume: 40 } },
+  ]);
+  await notifier.notify("K2L");
+  assert.deepEqual(gateway.rings, [{ controllerId: "m128", seconds: 12, volume: 40 }]);
+
+  gateway.rings = [];
+  const results = await notifier.test("deck", { seconds: 1, volume: 75 });
+  assert.deepEqual(gateway.rings, [
+    { controllerId: "deck1", seconds: 1, volume: 75 },
+    { controllerId: "deck2", seconds: 1, volume: 75 },
+  ]);
+  assert.deepEqual(results.map((result) => result.status), [202, 202]);
 });
 
 test("alert rings skip other postal codes and sessions with the alert sound off", async () => {

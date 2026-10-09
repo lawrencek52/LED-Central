@@ -5,8 +5,8 @@ export class FakeControllerGateway {
     this.sent = [];
   }
 
-  async ringAlert(controller, seconds = 12) {
-    (this.rings ??= []).push({ controllerId: controller.id, seconds });
+  async ringAlert(controller, seconds = 12, volume = 100) {
+    (this.rings ??= []).push({ controllerId: controller.id, seconds, volume });
     return 202;
   }
 

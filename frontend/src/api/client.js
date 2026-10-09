@@ -137,4 +137,9 @@ export const apiClient = {
       body: JSON.stringify(playback),
     }),
   stopPlayback: (id) => request(`/playback/${id}/stop`, { method: "POST" }),
+  testAlertSound: (canvasId, options) =>
+    request(`/canvases/${canvasId}/alert-sound`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    }),
 };

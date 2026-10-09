@@ -161,6 +161,7 @@ export function createApp({
       canvasService,
       playbackService: app.locals.playbackService,
       audioService,
+      weatherAlertNotifier,
     }),
   );
   app.use(

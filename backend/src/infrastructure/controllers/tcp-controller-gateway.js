@@ -359,9 +359,10 @@ export class TcpControllerGateway {
   // most once a second, only while something (the Status page) is asking.
   // Asks the controller to ring its speaker (the Mitel warble - see the
   // firmware's /speaker/warble). Controllers without a speaker answer 404.
-  async ringAlert(controller, seconds = 12) {
+  async ringAlert(controller, seconds = 12, volume = 100) {
+    const query = `seconds=${encodeURIComponent(seconds)}&volume=${encodeURIComponent(volume)}`;
     const response = await fetch(
-      `http://${controller.host}:${this.webPort}/speaker/warble?seconds=${encodeURIComponent(seconds)}`,
+      `http://${controller.host}:${this.webPort}/speaker/warble?${query}`,
       { method: "POST", signal: AbortSignal.timeout(this.connectionTimeoutMs) },
     );
     return response.status;

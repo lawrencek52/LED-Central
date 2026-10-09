@@ -16,7 +16,8 @@ export class WeatherAlertNotifier {
   }
 
   // Controllers on canvases currently playing a weather effect for `fsa`
-  // with its alert sound enabled.
+  // with its alert sound enabled, each with the volume to ring at (the
+  // loudest asked for, if it's on more than one such canvas).
   controllersFor(fsa) {
     const controllers = new Map();
     for (const session of this.playbackService.list()) {
@@ -26,24 +27,47 @@ export class WeatherAlertNotifier {
       const postalCode = session.parameters?.postalCode ?? effect.parameters?.postalCode?.default;
       const alertSound = session.parameters?.alertSound ?? effect.parameters?.alertSound?.default ?? true;
       if (!alertSound || forwardSortationArea(postalCode) !== fsa) continue;
-      for (const mapping of this.canvasService.get(session.canvasId)?.mappings ?? []) {
-        const controller = this.controllerService.get(mapping.controllerId);
-        if (controller) controllers.set(controller.id, controller);
+      const volume = Number(session.parameters?.alertVolume ?? effect.parameters?.alertVolume?.default ?? 100);
+      for (const controller of this.canvasControllers(session.canvasId)) {
+        const existing = controllers.get(controller.id);
+        controllers.set(controller.id, { controller, volume: Math.max(volume, existing?.volume ?? 0) });
       }
     }
     return [...controllers.values()];
   }
 
+  canvasControllers(canvasId) {
+    const controllers = new Map();
+    for (const mapping of this.canvasService.get(canvasId)?.mappings ?? []) {
+      const controller = this.controllerService.get(mapping.controllerId);
+      if (controller) controllers.set(controller.id, controller);
+    }
+    return [...controllers.values()];
+  }
+
   async notify(fsa) {
-    await Promise.all(
-      this.controllersFor(fsa).map(async (controller) => {
+    await this.ring(this.controllersFor(fsa), RING_SECONDS);
+  }
+
+  // Rings every controller on a canvas once, e.g. to try out a volume.
+  // Returns each controller's response status (404: no speaker).
+  async test(canvasId, { seconds = 1, volume = 100 } = {}) {
+    const controllers = this.canvasControllers(canvasId).map((controller) => ({ controller, volume }));
+    return this.ring(controllers, seconds);
+  }
+
+  async ring(targets, seconds) {
+    return Promise.all(
+      targets.map(async ({ controller, volume }) => {
         try {
-          const status = await this.gateway.ringAlert(controller, RING_SECONDS);
+          const status = await this.gateway.ringAlert(controller, seconds, Math.round(volume));
           if (status !== 202 && status !== 404) {
             this.logger.warn?.(`[weather] alert ring on ${controller.name ?? controller.id}: HTTP ${status}`);
           }
+          return { controllerId: controller.id, status };
         } catch (error) {
           this.logger.warn?.(`[weather] alert ring on ${controller.name ?? controller.id} failed: ${error.message}`);
+          return { controllerId: controller.id, error: error.message };
         }
       }),
     );

@@ -96,6 +96,7 @@ export function createCanvasRouter({
   canvasService,
   playbackService = null,
   audioService = null,
+  weatherAlertNotifier = null,
 }) {
   const router = Router();
   router.get("/", (req, res) => res.json(canvasService.list().map(withAudio)));
@@ -168,6 +169,24 @@ export function createCanvasRouter({
     }
     return res.json({ success: true });
   });
+  // Plays the weather alert warble on the canvas's controllers so its
+  // volume can be tried out: { seconds = 1, volume = 100 }.
+  router.post("/:id/alert-sound", async (req, res, next) => {
+    try {
+      if (!canvasService.get(req.params.id)) {
+        throw Object.assign(new Error("Canvas not found"), { statusCode: 404 });
+      }
+      if (!weatherAlertNotifier) {
+        throw Object.assign(new Error("Alert sounds are not available"), { statusCode: 503 });
+      }
+      const seconds = Math.min(60, Math.max(1, Number(req.body?.seconds ?? 1) || 1));
+      const volume = Math.min(100, Math.max(0, Number(req.body?.volume ?? 100) || 0));
+      res.json(await weatherAlertNotifier.test(req.params.id, { seconds, volume }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   return router;
 }
 

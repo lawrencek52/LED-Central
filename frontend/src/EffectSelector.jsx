@@ -199,6 +199,25 @@ function EffectSelector({
     }
   }
 
+  // Plays a one-second alert warble at the current alert volume on every
+  // canvas this effect is selected or playing on.
+  async function testAlertSound() {
+    const canvasIds = canvases
+      .filter((canvas) => (canvasEffectIds[canvas.id] ?? effects[0]?.id) === effect?.id)
+      .map((canvas) => canvas.id);
+    if (!canvasIds.length) {
+      onError(`Select ${effect?.name ?? "this effect"} on a canvas to test its alert sound there.`);
+      return;
+    }
+    onError("");
+    try {
+      const volume = Number(parameters.alertVolume ?? effect?.parameters?.alertVolume?.default ?? 100);
+      await Promise.all(canvasIds.map((canvasId) => apiClient.testAlertSound(canvasId, { seconds: 1, volume })));
+    } catch (requestError) {
+      onError(requestError.message);
+    }
+  }
+
   async function stopPlayback(canvasId) {
     const session = sessionsByCanvas[canvasId];
     if (!session) return;
@@ -590,6 +609,16 @@ function EffectSelector({
                 >
                   Reset defaults
                 </button>
+                {effect.parameters?.alertVolume && (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={testAlertSound}
+                    title="Play a one-second alert warble at this volume on the canvases using this effect"
+                  >
+                    Test alert sound
+                  </button>
+                )}
               </div>
               <p className="form-note">
                 Select an effect here to edit its controls, then assign it to a
