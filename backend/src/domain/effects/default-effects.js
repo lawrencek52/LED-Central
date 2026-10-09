@@ -115,7 +115,8 @@ export const defaultEffects = [
       timeZone: { type: "string", default: "America/Toronto" },
       use24Hour: { type: "boolean", default: false },
       // Ring the matrix's speaker (Mitel warble, 12 s) when a new alert
-      // appears, at alertVolume (0-100, 100 = loudest clean level).
+      // appears, at alertVolume (0-100; the top of the range is deliberately
+      // clipped, like the original Mitel ringer).
       alertSound: { type: "boolean", default: true },
       alertVolume: { type: "number", min: 0, max: 100, default: 100 },
     },
