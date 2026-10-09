@@ -5,6 +5,11 @@ export class FakeControllerGateway {
     this.sent = [];
   }
 
+  async ringAlert(controller, seconds = 12) {
+    (this.rings ??= []).push({ controllerId: controller.id, seconds });
+    return 202;
+  }
+
   async connect(controller) {
     if (this.failures.has(controller.id)) {
       throw new Error(`Connection failed for controller ${controller.id}`);

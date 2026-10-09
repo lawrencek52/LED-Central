@@ -172,3 +172,48 @@ test("WeatherService reports an invalid postal code without fetching", () => {
   assert.equal(service.getWeather("90210").status, "invalid");
   assert.equal(calls.length, 0);
 });
+
+test("WeatherService announces alerts that are new since the previous fetch, not ones already in force", async () => {
+  let clock = 0;
+  let warnings = [];
+  const withWarnings = () => {
+    const feature = cityFeature();
+    feature.properties.warnings = warnings;
+    return feature;
+  };
+  const { fetchImpl } = fakeFetch([
+    [/geolocator/, [{ title: "K2L", geometry: { coordinates: [-75.88, 45.31] } }]],
+    [/items\?.*bbox=/, { features: [cityFeature()] }],
+    [/items\/on-118/, withWarnings],
+  ]);
+  const announced = [];
+  const service = new WeatherService({
+    fetchImpl,
+    now: () => clock,
+    logger: {},
+    onNewAlerts: (fsa, alerts) => announced.push([fsa, alerts.map((alert) => alert.description)]),
+  });
+  const warning = (description, expiry) => ({
+    type: bilingual("warning"),
+    description: bilingual(description),
+    expiryTime: bilingual(expiry),
+  });
+  const refresh = async () => {
+    clock += 11 * 60 * 1000;
+    service.getWeather("K2L");
+    await settle(service, "K2L");
+  };
+
+  // Already in force at the first fetch (e.g. after a restart): not announced.
+  warnings = [warning("HEAT WARNING", "2026-10-09T13:00:00Z")];
+  service.getWeather("K2L");
+  await settle(service, "K2L");
+  assert.deepEqual(announced, []);
+
+  // A new alert is announced once; a reissue with a new expiry isn't new.
+  warnings = [warning("HEAT WARNING", "2026-10-09T13:00:00Z"), warning("SEVERE THUNDERSTORM WARNING", "2026-10-09T03:00:00Z")];
+  await refresh();
+  warnings = [warning("HEAT WARNING", "2026-10-09T18:00:00Z"), warning("SEVERE THUNDERSTORM WARNING", "2026-10-09T03:00:00Z")];
+  await refresh();
+  assert.deepEqual(announced, [["K2L", ["SEVERE THUNDERSTORM WARNING"]]]);
+});

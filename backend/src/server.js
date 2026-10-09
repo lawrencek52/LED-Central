@@ -19,6 +19,7 @@ import { EffectRenderService } from "./application/effect-render-service.js";
 import { PlaybackService } from "./application/playback-service.js";
 import { CanvasAudioService } from "./application/canvas-audio-service.js";
 import { WeatherService } from "./application/weather-service.js";
+import { WeatherAlertNotifier } from "./application/weather-alert-notifier.js";
 import { createCanvasRouter } from "./api/canvases.js";
 import { CanvasService } from "./application/canvas-service.js";
 import { SqliteControllerRepository } from "./infrastructure/persistence/sqlite-controller-repository.js";
@@ -88,6 +89,15 @@ export function createApp({
       audioService,
       weatherService,
     });
+  // Ring the matrices' speakers when the weather service sees a new alert.
+  const weatherAlertNotifier = new WeatherAlertNotifier({
+    playbackService: app.locals.playbackService,
+    canvasService,
+    controllerService,
+    effectService,
+    gateway,
+  });
+  weatherService.onNewAlerts = (fsa) => weatherAlertNotifier.notify(fsa);
   app.locals.metrics = metrics;
 
   app.use(

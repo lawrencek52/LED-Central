@@ -127,6 +127,10 @@ export class WeatherService {
     retryMs = 60 * 1000,
     timeoutMs = 20000,
     logger = console,
+    // Called as onNewAlerts(fsa, alerts) with alerts that weren't in the
+    // previous fetch for that postal code. Not called for a postal code's
+    // first fetch, so a restart doesn't re-announce alerts already in force.
+    onNewAlerts = null,
   } = {}) {
     this.fetchImpl = fetchImpl;
     this.now = now;
@@ -134,6 +138,7 @@ export class WeatherService {
     this.retryMs = retryMs;
     this.timeoutMs = timeoutMs;
     this.logger = logger;
+    this.onNewAlerts = onNewAlerts;
     // Per FSA: { location: [lon, lat], cityId, data, nextRefreshAt, inFlight, error }
     this.states = new Map();
   }
@@ -171,14 +176,30 @@ export class WeatherService {
       );
       // The postal code's own location, for sunrise/sunset at the display
       // rather than at the forecast city's reference point.
+      const previous = state.data;
       state.data = { ...parseCityPage(feature), location: state.location };
       state.error = null;
+      if (previous) this.announceNewAlerts(fsa, previous.alerts ?? [], state.data.alerts);
       state.nextRefreshAt = this.now() + this.refreshMs;
     } catch (error) {
       // Keep showing the last good forecast; retry sooner than a normal refresh.
       state.error = error.message;
       state.nextRefreshAt = this.now() + this.retryMs;
       this.logger.warn?.(`[weather] ${fsa}: ${error.message}`);
+    }
+  }
+
+  announceNewAlerts(fsa, previousAlerts, alerts) {
+    // An alert reissued with a new expiry is the same alert, not a new one.
+    const key = (alert) => `${alert.type}|${alert.description}`;
+    const known = new Set(previousAlerts.map(key));
+    const fresh = alerts.filter((alert) => !known.has(key(alert)));
+    if (!fresh.length) return;
+    this.logger.log?.(`[weather] ${fsa}: new alert ${fresh.map((alert) => alert.description).join(", ")}`);
+    try {
+      this.onNewAlerts?.(fsa, fresh);
+    } catch (error) {
+      this.logger.warn?.(`[weather] ${fsa}: alert notification failed: ${error.message}`);
     }
   }
 

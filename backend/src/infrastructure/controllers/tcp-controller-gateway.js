@@ -357,6 +357,16 @@ export class TcpControllerGateway {
   // needs no WebSocket, so it's available whether or not a preview is open.
   // Pure read of the last poll; a refresh is kicked off in the background at
   // most once a second, only while something (the Status page) is asking.
+  // Asks the controller to ring its speaker (the Mitel warble - see the
+  // firmware's /speaker/warble). Controllers without a speaker answer 404.
+  async ringAlert(controller, seconds = 12) {
+    const response = await fetch(
+      `http://${controller.host}:${this.webPort}/speaker/warble?seconds=${encodeURIComponent(seconds)}`,
+      { method: "POST", signal: AbortSignal.timeout(this.connectionTimeoutMs) },
+    );
+    return response.status;
+  }
+
   getControllerStats(controller) {
     const state = this.controllerStats.get(controller.id) ?? {
       fetchedAt: 0,
