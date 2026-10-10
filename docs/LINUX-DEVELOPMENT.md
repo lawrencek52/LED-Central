@@ -164,7 +164,7 @@ Use VS Code + Vite debugger:
 
 Backend logs are saved to:
 ```bash
-tail -f /tmp/led-central-backend.log
+tail -f ~/led-logs/led-central-backend.log
 ```
 
 Frontend logs appear in browser console (F12).
@@ -291,6 +291,6 @@ npm run dev
 ## Getting Help
 
 - Check individual component README files
-- Review logs: `tail -f /tmp/led-central-*.log`
+- Review logs: `tail -f ~/led-logs/led-central-*.log`
 - Examine `.vscode/settings.json` for IDE configuration
 - Visit project repository for issues and discussions

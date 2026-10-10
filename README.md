@@ -73,7 +73,7 @@ cd frontend && npm run dev      # UI on http://localhost:5173
 ```
 
 The helper script writes backend and frontend logs to
-`/tmp/led-central-backend.log` and `/tmp/led-central-frontend.log`.
+`~/led-logs/led-central-backend.log` and `~/led-logs/led-central-frontend.log` (override the folder with `LED_CENTRAL_LOG_DIR`).
 
 Run checks and builds:
 
