@@ -1,6 +1,7 @@
 import net from "node:net";
 import zlib from "node:zlib";
 import WebSocket from "ws";
+import { HostResolver } from "./host-resolver.js";
 
 const PIXEL_DATA_COMMAND = 3;
 const PIXEL_HEADER_SIZE = 24;
@@ -46,8 +47,13 @@ export class TcpControllerGateway {
     connectionTimeoutMs = 5000,
     webPort = 80,
     reconnectDelayMs = 1000,
+    resolver = new HostResolver(),
   } = {}) {
     this.connectionTimeoutMs = connectionTimeoutMs;
+    // Every connection to a controller - pixel sockets, stats fetches,
+    // preview/audio WebSockets - dials the address this resolves, never the
+    // bare hostname. See host-resolver.js for why.
+    this.resolver = resolver;
     this.reconnectDelayMs = reconnectDelayMs;
     // Connection keys whose last connect attempt failed, mapped to the
     // earliest time another background attempt may start - see
@@ -95,6 +101,13 @@ export class TcpControllerGateway {
     );
   }
 
+  // http:// or ws:// URL for a path on the controller's web server, dialed
+  // by resolved address.
+  async controllerUrl(controller, path, scheme = "http") {
+    const address = await this.resolver.address(controller.host);
+    return `${scheme}://${address}:${this.webPort}${path}`;
+  }
+
   getWifiSignal(controllerId) {
     return this.wifiSignals.get(controllerId)?.rssi ?? null;
   }
@@ -127,8 +140,47 @@ export class TcpControllerGateway {
     const pending = this.connectionPromises.get(key);
     if (pending) return pending;
 
+    const connection = this.openConnection(controller, key)
+      .catch((error) => {
+        this.offlineUntil.set(key, Date.now() + this.reconnectDelayMs);
+        this.resolver.markUnreachable(controller.host);
+        throw error;
+      })
+      .finally(() => this.connectionPromises.delete(key));
+    this.connectionPromises.set(key, connection);
+    return connection;
+  }
+
+  // connectionTimeoutMs bounds the address lookup and the TCP connect
+  // together, as it did when net.createConnection did the lookup itself.
+  async openConnection(controller, key) {
+    const deadline = Date.now() + this.connectionTimeoutMs;
+    const timedOut = () => {
+      const error = new Error(
+        `Connection timed out for controller ${controller.id}`,
+      );
+      error.code = "ETIMEDOUT";
+      return error;
+    };
+    let address;
+    try {
+      address = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(timedOut()),
+          this.connectionTimeoutMs,
+        );
+        this.resolver
+          .address(controller.host)
+          .then(resolve, reject)
+          .finally(() => clearTimeout(timeout));
+      });
+    } catch (error) {
+      this.recordFailure(controller, error);
+      throw error;
+    }
+
     const socket = net.createConnection({
-      host: controller.host,
+      host: address,
       port: controller.port,
     });
     socket.setNoDelay(true);
@@ -177,20 +229,17 @@ export class TcpControllerGateway {
       }
     });
 
-    const connection = new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         socket.destroy();
         this.statuses.set(key, {
           controllerId: controller.id,
           connected: false,
         });
-        const error = new Error(
-          `Connection timed out for controller ${controller.id}`,
-        );
-        error.code = "ETIMEDOUT";
+        const error = timedOut();
         this.recordFailure(controller, error);
         reject(error);
-      }, this.connectionTimeoutMs);
+      }, Math.max(0, deadline - Date.now()));
 
       socket.once("connect", () => {
         clearTimeout(timeout);
@@ -210,14 +259,7 @@ export class TcpControllerGateway {
         });
         reject(error);
       });
-    })
-      .catch((error) => {
-        this.offlineUntil.set(key, Date.now() + this.reconnectDelayMs);
-        throw error;
-      })
-      .finally(() => this.connectionPromises.delete(key));
-    this.connectionPromises.set(key, connection);
-    return connection;
+    });
   }
 
   // Connected if any of this controller's connections (probe or per-channel)
@@ -362,7 +404,7 @@ export class TcpControllerGateway {
   async ringAlert(controller, seconds = 12, volume = 100) {
     const query = `seconds=${encodeURIComponent(seconds)}&volume=${encodeURIComponent(volume)}`;
     const response = await fetch(
-      `http://${controller.host}:${this.webPort}/speaker/warble?${query}`,
+      await this.controllerUrl(controller, `/speaker/warble?${query}`),
       { method: "POST", signal: AbortSignal.timeout(this.connectionTimeoutMs) },
     );
     return response.status;
@@ -379,9 +421,10 @@ export class TcpControllerGateway {
     this.controllerStats.set(controller.id, state);
     if (!state.inFlight && Date.now() - state.fetchedAt >= 1000) {
       state.inFlight = true;
-      fetch(`http://${controller.host}:${this.webPort}/statistics/dynamic`, {
-        signal: AbortSignal.timeout(this.connectionTimeoutMs),
-      })
+      this.controllerUrl(controller, "/statistics/dynamic")
+        .then((url) =>
+          fetch(url, { signal: AbortSignal.timeout(this.connectionTimeoutMs) }),
+        )
         .then((response) => (response.ok ? response.json() : null))
         .then((stats) => {
           const now = Date.now();
@@ -491,7 +534,8 @@ export class TcpControllerGateway {
 
   refreshDynamicStats(controller, state) {
     state.statsAt = Date.now();
-    fetch(`http://${controller.host}:${this.webPort}/statistics/dynamic`)
+    this.controllerUrl(controller, "/statistics/dynamic")
+      .then((url) => fetch(url))
       .then((response) => (response.ok ? response.json() : null))
       .then((stats) => {
         if (stats) state.drawFps = Number(stats.LED_FPS || 0);
@@ -500,17 +544,30 @@ export class TcpControllerGateway {
   }
 
   connectPreview(controller, state) {
-    const socket = new WebSocket(
-      `ws://${controller.host}:${this.webPort}/ws/frames`,
+    this.resolver.address(controller.host).then(
+      (address) => {
+        if (state.active && !state.socket)
+          this.openPreview(controller, state, address);
+      },
+      () => {
+        setTimeout(() => {
+          if (!state.socket && state.active) this.connectPreview(controller, state);
+        }, 1000);
+      },
     );
+  }
+
+  openPreview(controller, state, address) {
+    const base = `${address}:${this.webPort}`;
+    const socket = new WebSocket(`ws://${base}/ws/frames`);
     state.socket = socket;
     Promise.all([
-      fetch(`http://${controller.host}:${this.webPort}/statistics/static`).then(
-        (response) => (response.ok ? response.json() : null),
+      fetch(`http://${base}/statistics/static`).then((response) =>
+        response.ok ? response.json() : null,
       ),
-      fetch(
-        `http://${controller.host}:${this.webPort}/statistics/dynamic`,
-      ).then((response) => (response.ok ? response.json() : null)),
+      fetch(`http://${base}/statistics/dynamic`).then((response) =>
+        response.ok ? response.json() : null,
+      ),
     ])
       .then(([staticStats, dynamicStats]) => {
         if (staticStats) {
@@ -594,7 +651,8 @@ export class TcpControllerGateway {
   }
 
   probeAudioSupport(controller) {
-    return fetch(`http://${controller.host}:${this.webPort}/statistics/static`)
+    return this.controllerUrl(controller, "/statistics/static")
+      .then((url) => fetch(url))
       .then((response) => (response.ok ? response.json() : null))
       .then((stats) => {
         const available = Boolean(stats?.AUDIO_SOCKET);
@@ -616,9 +674,23 @@ export class TcpControllerGateway {
   }
 
   connectAudioSocket(controller) {
-    const socket = new WebSocket(
-      `ws://${controller.host}:${this.webPort}/ws/audio`,
+    this.controllerUrl(controller, "/ws/audio", "ws").then(
+      (url) => {
+        const state = this.audioStates.get(controller.id);
+        if (!state?.socket && state?.available !== false)
+          this.openAudioSocket(controller, url);
+      },
+      () => {
+        setTimeout(() => {
+          const state = this.audioStates.get(controller.id);
+          if (!state?.socket && state?.available) this.connectAudioSocket(controller);
+        }, 1000);
+      },
     );
+  }
+
+  openAudioSocket(controller, url) {
+    const socket = new WebSocket(url);
     const state = this.audioStates.get(controller.id) ?? {
       available: true,
       checkedAt: Date.now(),

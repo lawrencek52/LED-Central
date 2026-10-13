@@ -7,6 +7,7 @@ import {
   consumeSocketResponses,
   encodePixelFrame,
 } from "./tcp-controller-gateway.js";
+import { HostResolver } from "./host-resolver.js";
 
 // A firmware SocketResponse (72 bytes, little-endian) carrying `rssi`.
 function socketResponse(rssi) {
@@ -299,4 +300,64 @@ test("TCP gateway logs a controller outage once when it starts and once when it 
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(logged.filter((line) => /Deck3 \(127\.0\.0\.1\) reconnected after \d+s/.test(line)).length, 1);
+});
+
+test("TCP gateway dials a hostname controller by its resolved address, one lookup for all channels", async (t) => {
+  const sockets = new Set();
+  const deviceServer = net.createServer((socket) => sockets.add(socket));
+  deviceServer.listen(0, "127.0.0.1");
+  await new Promise((resolve) => deviceServer.once("listening", resolve));
+  t.after(() => {
+    for (const serverSocket of sockets) serverSocket.destroy();
+    deviceServer.close();
+  });
+
+  const lookedUp = [];
+  const gateway = new TcpControllerGateway({
+    connectionTimeoutMs: 1000,
+    resolver: new HostResolver({
+      lookup: async (host) => {
+        lookedUp.push(host);
+        return { address: "127.0.0.1" };
+      },
+    }),
+  });
+  const controller = { id: "controller-1", host: "deck3.local", port: deviceServer.address().port };
+  t.after(() => gateway.disconnect(controller.id));
+  await gateway.sendFrames(
+    controller,
+    [1, 2, 4].map((channelMask) => ({ timestamp: Date.now(), channelMask, pixels: [[1, 2, 3]] })),
+  );
+
+  for (let attempt = 0; attempt < 50 && sockets.size < 3; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.deepEqual(lookedUp, ["deck3.local"]);
+  assert.equal(sockets.size, 3);
+});
+
+test("TCP gateway fails fast without piling up lookups while a hostname won't resolve", async () => {
+  let lookups = 0;
+  const gateway = new TcpControllerGateway({
+    connectionTimeoutMs: 1000,
+    reconnectDelayMs: 0,
+    resolver: new HostResolver({
+      retryDelayMs: 60000,
+      lookup: async () => {
+        lookups += 1;
+        const error = new Error("getaddrinfo ENOTFOUND deck3.local");
+        error.code = "ENOTFOUND";
+        throw error;
+      },
+    }),
+  });
+  const controller = { id: "controller-1", host: "deck3.local", port: 49152 };
+  const frames = [1, 2, 4].map((channelMask) => ({ timestamp: Date.now(), channelMask, pixels: [[1, 2, 3]] }));
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await gateway.sendFrames(controller, frames).catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(lookups, 1);
+  assert.equal(gateway.getStatus(controller.id).connected, false);
 });
