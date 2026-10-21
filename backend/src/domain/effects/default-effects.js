@@ -692,6 +692,27 @@ export const defaultEffects = [
     },
     tags: ["animated", "holiday"],
   },
+  {
+    id: "halloween",
+    name: "Halloween",
+    description:
+      "Orange and black: pools of flickering jack-o'-lantern glow drift along the strip with darkness between them. Pairs of creepy eyes open at random spots in the dark, stare, blink and fade away, and every so often a lightning strike flashes across every strip at once. glowAmount sets how much of the strip glows; eyeCount is how many pairs can watch at once per strip (0 for none); lightningPerMinute 0 turns the lightning off. Sizes are in LEDs on a 60 LED/m strip, scaled to each strip's real density.",
+    renderer: "halloween",
+    parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
+      glowColor: { type: "color", default: "#ff5a00" },
+      glowAmount: { type: "number", min: 0, max: 100, default: 55 },
+      glowSize: { type: "number", min: 2, max: 100, default: 16 },
+      glowSpeed: { type: "number", min: 0, max: 5, default: 0.4 },
+      eyeCount: { type: "number", min: 0, max: 6, default: 1 },
+      eyeColor: { type: "color", default: "#7fff00" },
+      eyeSize: { type: "number", min: 1, max: 6, default: 2 },
+      eyeGap: { type: "number", min: 1, max: 12, default: 4 },
+      lightningPerMinute: { type: "number", min: 0, max: 30, default: 3 },
+      lightningColor: { type: "color", default: "#d8ccff" },
+    },
+    tags: ["animated", "holiday"],
+  },
   // {
   //   id: 'mp4-playback',
   //   name: 'MP4 Playback',

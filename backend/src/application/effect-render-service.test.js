@@ -1763,3 +1763,105 @@ test("candy cane stands upright on a matrix with stripes climbing toward the top
   assert.ok(countColor(before, [0, 0, 0]) === 0);
   assert.equal(greenStripeStart(after) - greenStripeStart(before), 5);
 });
+
+const halloweenEffect = {
+  renderer: "halloween",
+  parameters: defaultEffects.find((effect) => effect.id === "halloween").parameters,
+};
+
+function halloweenStrips(service, { strips = 1, width = 120, timeSeconds = 0, parameters = {} } = {}) {
+  const canvas = {
+    width,
+    height: strips,
+    mappings: Array.from({ length: strips }, (_, row) => ({
+      controllerId: `c${row}`,
+      stripIndex: 0,
+      layout: "parallel",
+      x: 0,
+      y: row,
+      width,
+      height: 1,
+    })),
+  };
+  const { pixels } = service.render({
+    effect: halloweenEffect,
+    canvas,
+    parameters: { timeSeconds, ...parameters },
+  });
+  return Array.from({ length: strips }, (_, row) => pixels.slice(row * width, (row + 1) * width));
+}
+
+const isBlack = ([r, g, b]) => r + g + b === 0;
+const glowOnly = { eyeCount: 0, lightningPerMinute: 0 };
+
+test("halloween glow is orange pools with black between them", () => {
+  const service = new EffectRenderService();
+  let lit = 0;
+  let dark = 0;
+  for (let timeSeconds = 0; timeSeconds < 30; timeSeconds += 1.5) {
+    const [strip] = halloweenStrips(service, { timeSeconds, parameters: glowOnly });
+    for (const pixel of strip) {
+      if (isBlack(pixel)) dark += 1;
+      else {
+        lit += 1;
+        const [r, g, b] = pixel;
+        assert.ok(r >= g && g >= b, `not orange: ${pixel}`);
+      }
+    }
+  }
+  assert.ok(lit > 0 && dark > 0, `lit ${lit}, dark ${dark}`);
+  const [none] = halloweenStrips(service, { timeSeconds: 5, parameters: { ...glowOnly, glowAmount: 0 } });
+  assert.ok(none.every(isBlack));
+  const [all] = halloweenStrips(service, { timeSeconds: 5, parameters: { ...glowOnly, glowAmount: 100 } });
+  assert.ok(all.every((pixel) => !isBlack(pixel)));
+});
+
+test("halloween glow drifts over time and differs from strip to strip", () => {
+  const service = new EffectRenderService();
+  const [before, other] = halloweenStrips(service, { strips: 2, timeSeconds: 10, parameters: glowOnly });
+  const [after] = halloweenStrips(service, { timeSeconds: 12, parameters: glowOnly });
+  assert.notDeepEqual(after, before);
+  assert.notDeepEqual(other, before);
+});
+
+test("halloween eyes open in pairs in the dark, and blink", () => {
+  const service = new EffectRenderService();
+  const isEye = ([r, g, b]) => r === 127 && g === 255 && b === 0;
+  const parameters = { glowAmount: 0, lightningPerMinute: 0, eyeCount: 1 };
+  let pairsSeen = 0;
+  let blinks = 0;
+  let lastOpenAt = null;
+  let darkSinceOpen = false;
+  for (let timeSeconds = 0; timeSeconds < 120; timeSeconds += 0.02) {
+    const [strip] = halloweenStrips(service, { timeSeconds, parameters });
+    const eyes = strip.flatMap((pixel, index) => (isEye(pixel) ? [index] : []));
+    if (eyes.length === 4) {
+      // Default eyeSize 2, eyeGap 4: two 2-LED eyes with 4 dark LEDs between.
+      assert.deepEqual(eyes.map((index) => index - eyes[0]), [0, 1, 6, 7]);
+      pairsSeen += 1;
+      // Fully open, then fully dark for under 0.3s, then fully open again.
+      if (darkSinceOpen && timeSeconds - lastOpenAt < 0.3) blinks += 1;
+      lastOpenAt = timeSeconds;
+      darkSinceOpen = false;
+    } else if (strip.every(isBlack)) {
+      darkSinceOpen = lastOpenAt !== null;
+    }
+  }
+  assert.ok(pairsSeen > 0, "a pair of eyes should open within two minutes");
+  assert.ok(blinks > 0, "open eyes should blink shut and reopen");
+});
+
+test("halloween lightning flashes every strip at once, and can be turned off", () => {
+  const service = new EffectRenderService();
+  const isFlash = (strip) => strip.every(([, , b]) => b > 100);
+  let flashes = 0;
+  for (let timeSeconds = 0; timeSeconds < 120; timeSeconds += 0.05) {
+    const strips = halloweenStrips(service, { strips: 3, width: 60, timeSeconds, parameters: { eyeCount: 0 } });
+    const flashing = strips.map(isFlash);
+    assert.ok(flashing.every((value) => value === flashing[0]), `strips disagree at ${timeSeconds}s`);
+    if (flashing[0]) flashes += 1;
+    const [off] = halloweenStrips(service, { width: 60, timeSeconds, parameters: { eyeCount: 0, lightningPerMinute: 0 } });
+    assert.ok(!isFlash(off));
+  }
+  assert.ok(flashes > 0, "3 strikes a minute should flash within two minutes");
+});

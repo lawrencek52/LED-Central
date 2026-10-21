@@ -1344,6 +1344,72 @@ const renderers = {
     }
     return pixels;
   },
+  // Orange and black, in three layers: jack-o'-lantern glow (smooth noise
+  // thresholded into drifting pools of orange, with a fast candle flicker),
+  // creepy eyes (a pair opens somewhere dark, stares, blinks, fades), and
+  // lightning (short random multi-flash strikes). Glow and eyes are seeded
+  // per strip, so each strip differs; lightning uses a fixed seed so a
+  // strike flashes across every strip of the canvas at the same moment.
+  //
+  // Credits: the eyes and lightning layers are inspired by WLED's "Halloween
+  // Eyes" and "Lightning" effects (wled00/FX.cpp in the WLED project,
+  // https://github.com/wled/WLED, whose effects code builds on Harm Aldick's
+  // WS2812FX library), which WLED users name as Halloween favourites. The
+  // default glow orange (255,90,0) is Trimlight's "Jack-O-Lantern Glow"
+  // (https://trimlight.com/blog/trimlight-halloween-patterns). No code is
+  // taken from either; this is a separate implementation of the ideas.
+  halloween: ({ width, height, parameters, timestamp }) => {
+    const seconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    const seed = Number(parameters.randomSeed ?? 0) | 0;
+    const glow = parseColor(parameters.glowColor ?? "#ff5a00");
+    // The dim end of a pool fades toward a deep ember red, not grey.
+    const ember = [glow[0] * 0.55, glow[1] * 0.12, glow[2] * 0.1];
+    const glowAmount = clamp(Number(parameters.glowAmount ?? 55), 0, 100) / 100;
+    const glowSize = Math.max(
+      1,
+      densityScaledMagnitude(
+        clamp(Number(parameters.glowSize ?? 16), 2, 100),
+        parameters.ledsPerMeter,
+      ),
+    );
+    const glowSpeed = clamp(Number(parameters.glowSpeed ?? 0.4), 0, 5);
+    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+
+    // Noise lands mostly near 0.5, so the pool threshold moves across that
+    // middle range as glowAmount goes from all-dark to all-lit.
+    const threshold = 0.5 + (0.5 - glowAmount) * 0.8;
+    const drift = seconds * glowSpeed;
+    for (let y = 0; glowAmount > 0 && y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const n = valueNoise2D(x / glowSize - drift, y / glowSize + drift * 0.6, seed);
+        const level =
+          glowAmount === 1 ? 1 : smoothstep(threshold - 0.12, threshold + 0.12, n);
+        if (level === 0) continue;
+        const flicker = 0.75 + 0.25 * valueNoise2D(x / 3, seconds * 9, seed + 7);
+        pixels[y * width + x] = ember.map((low, channel) =>
+          Math.round((low + (glow[channel] - low) * level) * level * flicker),
+        );
+      }
+    }
+
+    drawHalloweenEyes(pixels, width, height, parameters, seconds, seed);
+
+    const flash = lightningIntensityAt(
+      seconds,
+      clamp(Number(parameters.lightningPerMinute ?? 3), 0, 30),
+    );
+    if (flash > 0) {
+      const bolt = parseColor(parameters.lightningColor ?? "#d8ccff");
+      for (const pixel of pixels) {
+        for (let channel = 0; channel < 3; channel += 1) {
+          pixel[channel] = Math.round(
+            pixel[channel] + (bolt[channel] - pixel[channel]) * flash,
+          );
+        }
+      }
+    }
+    return pixels;
+  },
   snake: ({ width, height, parameters, timestamp }) => {
     const snakeSize = densityScaledSize(
       Math.max(1, Number(parameters.snakeSize ?? 3)),
@@ -1998,6 +2064,138 @@ function candyCaneColorAt(cane, axisPos, viewTurn) {
   return sum.map((channel) => Math.round(channel / samples));
 }
 
+// After WLED's "Halloween Eyes" effect (see the halloween renderer's
+// credits). Each of the eyeCount "watchers" runs its own repeating cycle (length and
+// phase fixed per watcher, so they don't open in lockstep). In each cycle it
+// may open a pair of eyes at a random spot: they fade in while the darkness
+// around them deepens, stare, blink once, then fade out.
+const EYE_FADE_IN_SECONDS = 0.35;
+const EYE_FADE_OUT_SECONDS = 0.6;
+const EYE_BLINK_SECONDS = 0.16;
+const EYE_DARK_MARGIN = 2;
+
+function drawHalloweenEyes(pixels, width, height, parameters, seconds, seed) {
+  const eyeCount = clamp(Math.round(Number(parameters.eyeCount ?? 1)), 0, 6);
+  const eyeSize = densityScaledSize(
+    clamp(Math.round(Number(parameters.eyeSize ?? 2)), 1, 6),
+    parameters.ledsPerMeter,
+  );
+  const eyeGap = densityScaledSize(
+    clamp(Math.round(Number(parameters.eyeGap ?? 4)), 1, 12),
+    parameters.ledsPerMeter,
+  );
+  const eyeColor = parseColor(parameters.eyeColor ?? "#7fff00");
+  const pairWidth = eyeSize * 2 + eyeGap;
+  // Square eyes on a matrix; on a strip an eye is just a run of LEDs.
+  const eyeHeight = height > 1 ? Math.min(eyeSize, height) : 1;
+  if (width < pairWidth + EYE_DARK_MARGIN * 2) return;
+
+  for (let watcher = 0; watcher < eyeCount; watcher += 1) {
+    const setup = mulberry32(hashInts(seed, watcher, 0x3e7e));
+    const cycleSeconds = 4.5 + setup() * 3;
+    const shifted = seconds + setup() * cycleSeconds;
+    const cycle = Math.floor(shifted / cycleSeconds);
+    const intoCycle = shifted - cycle * cycleSeconds;
+    const rng = mulberry32(hashInts(seed, watcher, cycle));
+    if (rng() > 0.75) continue;
+    const openSeconds = 1.5 + rng() * (cycleSeconds - 2.5);
+    const opensAt = rng() * (cycleSeconds - openSeconds);
+    const blinkAt = 0.5 + rng() * (openSeconds - 1.2);
+    const left =
+      EYE_DARK_MARGIN +
+      Math.floor(rng() * (width - pairWidth - EYE_DARK_MARGIN * 2 + 1));
+    const top = Math.floor(rng() * (height - eyeHeight + 1));
+
+    const open = intoCycle - opensAt;
+    if (open < 0 || open > openSeconds) continue;
+    let level = Math.min(
+      1,
+      open / EYE_FADE_IN_SECONDS,
+      (openSeconds - open) / EYE_FADE_OUT_SECONDS,
+    );
+    // The darkness stays while the eyes blink shut.
+    const darkness = level;
+    if (Math.abs(open - blinkAt) < EYE_BLINK_SECONDS / 2) level = 0;
+
+    for (let y = top; y < top + eyeHeight; y += 1) {
+      for (
+        let x = left - EYE_DARK_MARGIN;
+        x < left + pairWidth + EYE_DARK_MARGIN;
+        x += 1
+      ) {
+        const pixel = pixels[y * width + x];
+        const inEye =
+          x >= left &&
+          x < left + pairWidth &&
+          (x < left + eyeSize || x >= left + eyeSize + eyeGap);
+        for (let channel = 0; channel < 3; channel += 1) {
+          const dimmed = pixel[channel] * (1 - darkness);
+          pixel[channel] = Math.round(
+            inEye ? dimmed + (eyeColor[channel] - dimmed) * level : dimmed,
+          );
+        }
+      }
+    }
+  }
+}
+
+// After WLED's "Lightning" effect (see the halloween renderer's credits).
+// 0..1 brightness of any lightning flash at `seconds`. Time is cut into 2s
+// slots; each slot strikes with probability lightningPerMinute/30, as 2-4
+// quick flashes of falling strength and a short afterglow. A strike can run
+// past its own slot, so the previous slot is checked too. Flashes last at
+// least 80ms so a 20fps frame can't fall between them.
+const LIGHTNING_SLOT_SECONDS = 2;
+
+function lightningIntensityAt(seconds, perMinute) {
+  if (perMinute <= 0) return 0;
+  const chance = Math.min(1, (perMinute * LIGHTNING_SLOT_SECONDS) / 60);
+  const slot = Math.floor(seconds / LIGHTNING_SLOT_SECONDS);
+  let intensity = 0;
+  for (const strikeSlot of [slot - 1, slot]) {
+    const rng = mulberry32(hashInts(0x11e7, strikeSlot, 0xb017));
+    if (rng() >= chance) continue;
+    let at = strikeSlot * LIGHTNING_SLOT_SECONDS + rng() * 1.2;
+    const flashes = 2 + Math.floor(rng() * 3);
+    const peak = 0.75 + rng() * 0.25;
+    for (let flash = 0; flash < flashes; flash += 1) {
+      const lasts = 0.08 + rng() * 0.06;
+      if (seconds >= at && seconds < at + lasts) {
+        intensity = Math.max(intensity, peak * (1 - flash * 0.2));
+      }
+      at += lasts + 0.06 + rng() * 0.14;
+    }
+    const afterglow = (seconds - at) / 0.4;
+    if (afterglow >= 0 && afterglow < 1) {
+      intensity = Math.max(intensity, 0.25 * peak * (1 - afterglow));
+    }
+  }
+  return intensity;
+}
+
+function hashInts(a, b, c) {
+  let h =
+    Math.imul(a | 0, 0x27d4eb2d) ^
+    Math.imul(b | 0, 0x165667b1) ^
+    Math.imul(c | 0, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+// Smoothly interpolated random values on an integer grid, 0..1.
+function valueNoise2D(x, y, seed) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const sx = smoothstep(0, 1, x - x0);
+  const sy = smoothstep(0, 1, y - y0);
+  const corner = (ix, iy) => hashInts(ix, iy, seed) / 4294967296;
+  const top = corner(x0, y0) + (corner(x0 + 1, y0) - corner(x0, y0)) * sx;
+  const bottom =
+    corner(x0, y0 + 1) + (corner(x0 + 1, y0 + 1) - corner(x0, y0 + 1)) * sx;
+  return top + (bottom - top) * sy;
+}
+
 function parseColor(value) {
   if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) {
     throw new EffectRenderError(`Invalid color: ${value}`);
@@ -2009,6 +2207,12 @@ function parseColor(value) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+// 0 below edge0, 1 above edge1, an S-curve between.
+function smoothstep(edge0, edge1, value) {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 function average(values) {
