@@ -13,6 +13,7 @@ import {
   __resetSimulationCachesForTests,
 } from "./effect-render-service.js";
 import { mapCanvasFrame } from "../domain/canvases/canvas.js";
+import { defaultEffects } from "../domain/effects/default-effects.js";
 
 // fire/classic-fire/musical-fire/spectrum-band share module-level simulation
 // caches (see fireHeatCache/fireGridCache in effect-render-service.js) that
@@ -1657,3 +1658,108 @@ test("rocket-fireworks: strips show different content over time (rockets origina
 //
 //   assert.notDeepEqual(frameA.pixels, frameB.pixels);
 // });
+
+const candyCaneEffect = {
+  renderer: "candy-cane",
+  parameters: defaultEffects.find((effect) => effect.id === "candy-cane").parameters,
+};
+const CANE_WHITE = [255, 255, 255];
+const CANE_GREEN = [0, 192, 32];
+const CANE_RED = [255, 0, 0];
+
+function candyCaneStrips(service, { strips = 1, width = 120, ledsPerMeter = null, timeSeconds = 0, parameters = {} } = {}) {
+  const canvas = {
+    width,
+    height: strips,
+    mappings: Array.from({ length: strips }, (_, row) => ({
+      controllerId: "c1",
+      stripIndex: row,
+      layout: "parallel",
+      x: 0,
+      y: row,
+      width,
+      height: 1,
+      ledsPerMeter,
+    })),
+  };
+  const { pixels } = service.render({
+    effect: candyCaneEffect,
+    canvas,
+    parameters: { timeSeconds, ...parameters },
+  });
+  return Array.from({ length: strips }, (_, row) => pixels.slice(row * width, (row + 1) * width));
+}
+
+const countColor = (pixels, color) =>
+  pixels.filter((pixel) => pixel.every((channel, index) => channel === color[index])).length;
+
+// Index of the first LED where a green stripe starts (white/red -> green).
+function greenStripeStart(pixels) {
+  return pixels.findIndex(
+    (pixel, index) =>
+      index > 0 &&
+      pixel[1] === CANE_GREEN[1] && pixel[0] === 0 &&
+      pixels[index - 1][1] !== CANE_GREEN[1],
+  );
+}
+
+test("candy cane is mostly white with a wide green stripe and a narrow red one", () => {
+  const [strip] = candyCaneStrips(new EffectRenderService(), { width: 400 });
+  const white = countColor(strip, CANE_WHITE);
+  const green = countColor(strip, CANE_GREEN);
+  const red = countColor(strip, CANE_RED);
+  assert.ok(white > green && green > red && red > 0, `white ${white}, green ${green}, red ${red}`);
+  // Defaults: green 30% and red 8% of each 40-LED twist (edge LEDs blend).
+  assert.ok(Math.abs(green - 400 * 0.3) <= 20, `green ${green}`);
+  assert.ok(Math.abs(red - 400 * 0.08) <= 20, `red ${red}`);
+});
+
+test("candy cane stripes climb away from the strip's start as it spins", () => {
+  const service = new EffectRenderService();
+  // 0.5 twists/s x 40 LEDs/twist = 20 LEDs/s, so 0.25s moves 5 LEDs.
+  const [before] = candyCaneStrips(service, { timeSeconds: 10.2 });
+  const [after] = candyCaneStrips(service, { timeSeconds: 10.45 });
+  assert.equal(greenStripeStart(after) - greenStripeStart(before), 5);
+  const [reversedBefore] = candyCaneStrips(service, { timeSeconds: 10.2, parameters: { reversed: true } });
+  const [reversedAfter] = candyCaneStrips(service, { timeSeconds: 10.45, parameters: { reversed: true } });
+  const lastGreenStart = (pixels) => pixels.length - 1 - greenStripeStart([...pixels].reverse());
+  assert.equal(lastGreenStart(reversedAfter) - lastGreenStart(reversedBefore), -5);
+});
+
+test("each parallel strip views the candy cane from a different angle", () => {
+  const service = new EffectRenderService();
+  // 4 strips over 360 degrees: each is a quarter turn round, a quarter of a
+  // 40-LED twist (10 LEDs) further along the same helix.
+  const strips = candyCaneStrips(service, { strips: 4, timeSeconds: 3 });
+  for (let row = 1; row < 4; row += 1) {
+    assert.deepEqual(strips[row].slice(0, 80), strips[0].slice(10 * row, 10 * row + 80));
+  }
+  const sameView = candyCaneStrips(service, { strips: 4, timeSeconds: 3, parameters: { viewSpread: 0 } });
+  assert.deepEqual(sameView[3], sameView[0]);
+});
+
+test("candy cane twist length is physical, scaled to each strip's LED density", () => {
+  const service = new EffectRenderService();
+  const [dense] = candyCaneStrips(service, { width: 400, ledsPerMeter: 60 });
+  const [sparse] = candyCaneStrips(service, { width: 200, ledsPerMeter: 30 });
+  // A 30 LED/m strip covers the same twists in half as many LEDs.
+  assert.ok(Math.abs(countColor(dense, CANE_GREEN) - 2 * countColor(sparse, CANE_GREEN)) <= 12);
+});
+
+test("candy cane stands upright on a matrix with stripes climbing toward the top", () => {
+  const service = new EffectRenderService();
+  const canvas = {
+    width: 16,
+    height: 64,
+    mappings: [{ controllerId: "m1", stripIndex: 0, layout: "series", x: 0, y: 0, width: 16, height: 64 }],
+  };
+  const column = (timeSeconds) => {
+    const { pixels } = service.render({ effect: candyCaneEffect, canvas, parameters: { timeSeconds } });
+    // Center column, bottom (row 63, HUB75 row 0 is the top) upward.
+    return Array.from({ length: 64 }, (_, ascend) => pixels[(63 - ascend) * 16 + 8]);
+  };
+  const before = column(10.2);
+  const after = column(10.45);
+  assert.ok(countColor(before, [0, 0, 0]) === 0);
+  assert.equal(greenStripeStart(after) - greenStripeStart(before), 5);
+});

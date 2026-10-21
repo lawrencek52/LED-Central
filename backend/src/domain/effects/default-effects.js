@@ -672,6 +672,26 @@ export const defaultEffects = [
     },
     tags: ["animated", "audio"],
   },
+  {
+    id: "candy-cane",
+    name: "CandyCane",
+    description:
+      "A rotating candy cane: mostly white, with a wide green stripe and a narrow red stripe wound around it, climbing the strip from its start (the controller end, for a left-to-right strip) as it spins. Each parallel strip views the cane from a different angle around it, spread over viewSpread degrees, so the stripes step diagonally across a wall of strips. On a matrix the cane stands upright and the stripes climb toward the top. twistLength is LEDs per full twist on a 60 LED/m strip, scaled to each strip's real density.",
+    renderer: "candy-cane",
+    parameters: {
+      brightness: { type: "number", min: 0, max: 100, default: 100 },
+      twistsPerSecond: { type: "number", min: 0, max: 5, default: 0.5 },
+      twistLength: { type: "number", min: 4, max: 300, default: 40 },
+      greenWidth: { type: "number", min: 0, max: 60, default: 30 },
+      redWidth: { type: "number", min: 0, max: 30, default: 8 },
+      viewSpread: { type: "number", min: 0, max: 360, default: 360 },
+      whiteColor: { type: "color", default: "#ffffff" },
+      greenColor: { type: "color", default: "#00c020" },
+      redColor: { type: "color", default: "#ff0000" },
+      reversed: { type: "boolean", default: false },
+    },
+    tags: ["animated", "holiday"],
+  },
   // {
   //   id: 'mp4-playback',
   //   name: 'MP4 Playback',

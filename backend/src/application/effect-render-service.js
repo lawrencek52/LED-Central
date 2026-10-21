@@ -1287,6 +1287,63 @@ const renderers = {
     }
     return pixels;
   },
+  // A candy cane spinning about its own long axis: white, with a wide green
+  // and a narrow red stripe wound around it as a helix, so spinning it makes
+  // the stripes climb the axis. On a strip the cane lies along the strip and
+  // the strip shows the one line of its surface facing the viewer; each
+  // parallel strip is a viewer at a different angle around it (its share of
+  // viewSpread), which shifts its stripes by that fraction of a twist. On a
+  // matrix the cane stands upright and fills the panel, columns sampling
+  // its front half - edges shaded darker so it reads as round.
+  "candy-cane": ({ width, height, parameters, timestamp }) => {
+    const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
+    const twistsPerSecond = clamp(Number(parameters.twistsPerSecond ?? 0.5), 0, 5);
+    const twistCells = densityScaledMagnitude(
+      clamp(Number(parameters.twistLength ?? 40), 4, 300),
+      parameters.ledsPerMeter,
+    );
+    const cane = {
+      twistCells,
+      spin: elapsedSeconds * twistsPerSecond,
+      greenWidth: clamp(Number(parameters.greenWidth ?? 30), 0, 60) / 100,
+      redWidth: clamp(Number(parameters.redWidth ?? 8), 0, 30) / 100,
+      white: parseColor(parameters.whiteColor ?? "#ffffff"),
+      green: parseColor(parameters.greenColor ?? "#00c020"),
+      red: parseColor(parameters.redColor ?? "#ff0000"),
+    };
+    const reversed = Boolean(parameters.reversed);
+    const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
+
+    if (height === 1) {
+      const viewSpread = clamp(Number(parameters.viewSpread ?? 360), 0, 360);
+      const stripCount = Math.max(1, Number(parameters.stripCount ?? 1));
+      const viewTurn =
+        (Number(parameters.mappingOrdinal ?? 0) / stripCount) * (viewSpread / 360);
+      for (let x = 0; x < width; x += 1) {
+        const axisPos = reversed ? width - 1 - x : x;
+        pixels[x] = candyCaneColorAt(cane, axisPos, viewTurn);
+      }
+      return pixels;
+    }
+
+    const upIsPositiveY = Boolean(parameters.upIsPositiveY);
+    for (let x = 0; x < width; x += 1) {
+      // Column -> where on the cane's visible front half it sits: u is the
+      // sideways position across the cane (-1..1), asin(u) the angle around
+      // it that faces the viewer there.
+      const u = ((x + 0.5) / width) * 2 - 1;
+      const viewTurn = Math.asin(u) / (2 * Math.PI);
+      const shade = 0.35 + 0.65 * Math.sqrt(Math.sqrt(1 - u * u));
+      for (let ascend = 0; ascend < height; ascend += 1) {
+        const y = matrixAscendToY(ascend, height, upIsPositiveY);
+        const axisPos = reversed ? height - 1 - ascend : ascend;
+        pixels[y * width + x] = candyCaneColorAt(cane, axisPos, viewTurn).map(
+          (channel) => Math.round(channel * shade),
+        );
+      }
+    }
+    return pixels;
+  },
   snake: ({ width, height, parameters, timestamp }) => {
     const snakeSize = densityScaledSize(
       Math.max(1, Number(parameters.snakeSize ?? 3)),
@@ -1915,6 +1972,30 @@ function defaultParameters(schema = {}) {
       definition.default,
     ]),
   );
+}
+
+// Color of the candy cane's surface at axisPos (in cells along its axis) as
+// seen from viewTurn (a fraction of a full turn around it). One twist of
+// the helix is: the green stripe, white, the red stripe centered in that
+// white, then white again. Averaged over a few points across the cell so
+// stripe edges move smoothly instead of stepping a whole LED at a time.
+function candyCaneColorAt(cane, axisPos, viewTurn) {
+  const { twistCells, spin, greenWidth, redWidth, white, green, red } = cane;
+  const redStart = greenWidth + (1 - greenWidth - redWidth) / 2;
+  const samples = 4;
+  const sum = [0, 0, 0];
+  for (let sample = 0; sample < samples; sample += 1) {
+    const along = axisPos + (sample + 0.5) / samples;
+    const phase = (((along / twistCells - spin + viewTurn) % 1) + 1) % 1;
+    const color =
+      phase < greenWidth
+        ? green
+        : phase >= redStart && phase < redStart + redWidth
+          ? red
+          : white;
+    for (let channel = 0; channel < 3; channel += 1) sum[channel] += color[channel];
+  }
+  return sum.map((channel) => Math.round(channel / samples));
 }
 
 function parseColor(value) {
