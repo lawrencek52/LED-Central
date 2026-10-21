@@ -361,3 +361,91 @@ test("TCP gateway fails fast without piling up lookups while a hostname won't re
   assert.equal(lookups, 1);
   assert.equal(gateway.getStatus(controller.id).connected, false);
 });
+
+// Stands in for a socket write stuck on a silently stalled controller: each
+// writeChannelFrames call records its frames and waits until released.
+function stallWrites(gateway) {
+  const writes = [];
+  gateway.writeChannelFrames = (controller, channelMask, key, frames) =>
+    new Promise((resolve, reject) => {
+      writes.push({ controllerId: controller.id, frames, resolve, reject });
+    });
+  return writes;
+}
+
+test("TCP gateway doesn't hold a caller up behind a stalled channel's write", async () => {
+  const gateway = new TcpControllerGateway({ sendWaitMs: 20 });
+  const writes = stallWrites(gateway);
+  const controller = { id: "deck1", host: "127.0.0.1", port: 1 };
+  const frame = { timestamp: Date.now() + 1000, channelMask: 1, pixels: [[1, 2, 3]] };
+
+  const startedAt = Date.now();
+  await gateway.sendFrames(controller, [frame]);
+  // Waits only sendWaitMs for the stuck write (not the 5s write timeout).
+  assert.ok(Date.now() - startedAt < 1000);
+  // While it's still stuck, later sends return at once without a new write.
+  const heldAt = Date.now();
+  await gateway.sendFrames(controller, [frame]);
+  assert.ok(Date.now() - heldAt < 15);
+  assert.equal(writes.length, 1);
+});
+
+test("TCP gateway sends frames held during a stall once the write finishes, dropping stale ones", async () => {
+  const gateway = new TcpControllerGateway({ sendWaitMs: 0 });
+  const writes = stallWrites(gateway);
+  const controller = { id: "deck1", host: "127.0.0.1", port: 1 };
+  const now = Date.now();
+  const at = (offsetMs) => ({ timestamp: now + offsetMs, channelMask: 1, pixels: [[1, 2, 3]] });
+
+  await gateway.sendFrames(controller, [at(1000)]);
+  await gateway.sendFrames(controller, [at(-300)]);
+  await gateway.sendFrames(controller, [at(-200), at(-100)]);
+  await gateway.sendFrames(controller, [at(500), at(600)]);
+  writes[0].reject(new Error("Controller write timed out"));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // Of the frames already due, only the newest is worth sending.
+  assert.equal(writes.length, 2);
+  assert.deepEqual(
+    writes[1].frames.map((frame) => frame.timestamp - now),
+    [-100, 500, 600],
+  );
+  writes[1].resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(gateway.sendQueues.size, 0);
+});
+
+test("TCP gateway keeps one stalled controller from freezing the others on the canvas", async (t) => {
+  const received = [];
+  const sockets = new Set();
+  const deviceServer = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("data", (data) => received.push(data));
+  });
+  deviceServer.listen(0, "127.0.0.1");
+  await new Promise((resolve) => deviceServer.once("listening", resolve));
+  t.after(() => {
+    for (const socket of sockets) socket.destroy();
+    deviceServer.close();
+  });
+
+  const gateway = new TcpControllerGateway({ connectionTimeoutMs: 1000, sendWaitMs: 20 });
+  const healthy = { id: "deck2", host: "127.0.0.1", port: deviceServer.address().port };
+  const stalled = { id: "deck1", host: "127.0.0.1", port: 1 };
+  const realWrite = gateway.writeChannelFrames.bind(gateway);
+  gateway.writeChannelFrames = (controller, ...rest) =>
+    controller.id === stalled.id ? new Promise(() => {}) : realWrite(controller, ...rest);
+  const frame = { timestamp: Date.now() + 1000, channelMask: 1, pixels: [[1, 2, 3]] };
+
+  const startedAt = Date.now();
+  for (let tick = 0; tick < 5; tick += 1) {
+    await Promise.allSettled([
+      gateway.sendFrames(stalled, [frame]),
+      gateway.sendFrames(healthy, [frame]),
+    ]);
+  }
+  assert.ok(Date.now() - startedAt < 1000);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(Buffer.concat(received).length, encodePixelFrame(frame).length * 5);
+  gateway.disconnect(healthy.id);
+});

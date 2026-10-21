@@ -47,9 +47,12 @@ export class TcpControllerGateway {
     connectionTimeoutMs = 5000,
     webPort = 80,
     reconnectDelayMs = 1000,
+    sendWaitMs = 100,
     resolver = new HostResolver(),
   } = {}) {
     this.connectionTimeoutMs = connectionTimeoutMs;
+    // How long a send waits on one channel's write - see sendChannelFrames().
+    this.sendWaitMs = sendWaitMs;
     // Every connection to a controller - pixel sockets, stats fetches,
     // preview/audio WebSockets - dials the address this resolves, never the
     // bare hostname. See host-resolver.js for why.
@@ -62,6 +65,8 @@ export class TcpControllerGateway {
     this.connections = new Map();
     this.connectionPromises = new Map();
     this.sendQueues = new Map();
+    // Frames held per connection key while that channel's write is in flight.
+    this.pendingFrames = new Map();
     this.queueStates = new Map();
     this.statuses = new Map();
     this.webPort = webPort;
@@ -296,53 +301,110 @@ export class TcpControllerGateway {
     );
   }
 
-  // Once a channel's connect has failed (controller rebooting, off the
-  // network, etc.), later sends fail fast while a reconnect runs in the
-  // background, rather than each one awaiting a fresh connect attempt. A
-  // playback tick awaits every controller on the canvas, so blocking here for
-  // up to connectionTimeoutMs per tick froze every *other* controller on the
-  // canvas for as long as the missing one stayed down (seen live on
-  // 2026-10-03 rebooting Deck1: repeated 5-8s whole-canvas freezes).
+  // A playback tick awaits every controller on the canvas, so nothing here
+  // may block a caller for long, or one missing controller freezes every
+  // *other* controller on the canvas with it. Two ways that used to happen:
+  //
+  // - Connect failures (controller rebooting, off the network): once a
+  //   channel's connect has failed, later sends fail fast while a reconnect
+  //   runs in the background, rather than each one awaiting a fresh connect
+  //   attempt (seen live on 2026-10-03 rebooting Deck1: repeated 5-8s
+  //   whole-canvas freezes).
+  // - A silent WiFi stall: the controller stops answering but its socket
+  //   still looks writable, so a write sits until its 5s timeout and the
+  //   retry's reconnect can take connectionTimeoutMs more. Seen in the
+  //   2026-10-13..21 deck.local logs as ~25 Deck11 freezes a day of 5s or
+  //   10s, each right after one deck dropped out. So a caller only waits
+  //   sendWaitMs for a channel's write; past that the write carries on in the
+  //   background, and frames for that channel that arrive meanwhile are held
+  //   (see holdPendingFrames) and sent once it finishes, instead of queueing
+  //   behind it and holding up their tick too.
   async sendChannelFrames(controller, channelMask, frames) {
     const key = this.connectionKey(controller.id, channelMask);
-    const previous = this.sendQueues.get(key) ?? Promise.resolve();
-    const send = previous
-      .catch(() => {})
-      .then(async () => {
-        if (this.offlineUntil.has(key)) {
-          if (
-            Date.now() >= this.offlineUntil.get(key) &&
-            !this.connectionPromises.has(key)
-          ) {
-            this.connect(controller, channelMask).catch(() => {});
-          }
-          throw new Error(
-            `Controller ${controller.id} is offline, reconnecting`,
-          );
-        }
-        let socket = await this.connect(controller, channelMask);
-        for (const frame of frames) {
-          const raw = encodePixelFrame(frame);
-          const compressed = encodeCompressedPacket(raw);
-          const packet = compressed.length < raw.length ? compressed : raw;
-          for (let attempt = 0; attempt < 2; attempt += 1) {
-            if (socket.destroyed || !socket.writable) {
-              socket = await this.connect(controller, channelMask);
-            }
-            try {
-              await write(socket, packet);
-              this.recordSent(controller.id, frame, packet.length);
-              break;
-            } catch (error) {
-              socket.destroy();
-              if (attempt === 1) throw error;
-              socket = await this.connect(controller, channelMask);
-            }
-          }
-        }
-      });
+    if (this.sendQueues.has(key)) {
+      this.holdPendingFrames(key, frames);
+      return;
+    }
+    await waitAtMost(
+      this.startChannelSend(controller, channelMask, key, frames),
+      this.sendWaitMs,
+    );
+  }
+
+  // Runs one channel's write, then whatever frames were held while it ran.
+  // sendQueues holds a channel's in-flight write for as long as it runs, and
+  // is cleared before the write's result reaches the caller, so a send made
+  // right after a failure gets the offline fast-fail rather than being held.
+  startChannelSend(controller, channelMask, key, frames) {
+    const send = this.writeChannelFrames(
+      controller,
+      channelMask,
+      key,
+      frames,
+    ).finally(() => {
+      const pending = this.pendingFrames.get(key) ?? [];
+      this.pendingFrames.delete(key);
+      this.sendQueues.delete(key);
+      if (pending.length > 0) {
+        this.startChannelSend(controller, channelMask, key, pending).catch(
+          () => {},
+        );
+      }
+    });
     this.sendQueues.set(key, send);
-    await send;
+    return send;
+  }
+
+  // Frames whose timestamp has already passed are dropped, except the newest:
+  // NightDriverStrip's WiFiDraw() only draws the newest already-due frame it
+  // finds buffered, so sending the rest after a stall is wasted writes. This
+  // also bounds what piles up while a write sits on a dead socket.
+  holdPendingFrames(key, frames) {
+    const held = [...(this.pendingFrames.get(key) ?? []), ...frames];
+    const now = Date.now();
+    const newestDue = held.reduce(
+      (newest, frame) =>
+        frame.timestamp <= now && frame.timestamp > newest
+          ? frame.timestamp
+          : newest,
+      -Infinity,
+    );
+    this.pendingFrames.set(
+      key,
+      held.filter((frame) => frame.timestamp >= newestDue),
+    );
+  }
+
+  async writeChannelFrames(controller, channelMask, key, frames) {
+    if (this.offlineUntil.has(key)) {
+      if (
+        Date.now() >= this.offlineUntil.get(key) &&
+        !this.connectionPromises.has(key)
+      ) {
+        this.connect(controller, channelMask).catch(() => {});
+      }
+      throw new Error(`Controller ${controller.id} is offline, reconnecting`);
+    }
+    let socket = await this.connect(controller, channelMask);
+    for (const frame of frames) {
+      const raw = encodePixelFrame(frame);
+      const compressed = encodeCompressedPacket(raw);
+      const packet = compressed.length < raw.length ? compressed : raw;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (socket.destroyed || !socket.writable) {
+          socket = await this.connect(controller, channelMask);
+        }
+        try {
+          await write(socket, packet);
+          this.recordSent(controller.id, frame, packet.length);
+          break;
+        } catch (error) {
+          socket.destroy();
+          if (attempt === 1) throw error;
+          socket = await this.connect(controller, channelMask);
+        }
+      }
+    }
   }
 
   recordSent(controllerId, frame, bytes = 0) {
@@ -762,7 +824,22 @@ export class TcpControllerGateway {
     for (const key of [...this.offlineUntil.keys()]) {
       if (key.startsWith(prefix)) this.offlineUntil.delete(key);
     }
+    for (const key of [...this.pendingFrames.keys()]) {
+      if (key.startsWith(prefix)) this.pendingFrames.delete(key);
+    }
   }
+}
+
+// Settles with `promise` if it settles within `ms`, otherwise resolves once
+// `ms` has passed and leaves `promise` running.
+function waitAtMost(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 export function encodePixelFrame(frame) {
