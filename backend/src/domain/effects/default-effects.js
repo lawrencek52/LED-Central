@@ -192,7 +192,7 @@ export const defaultEffects = [
     id: "nds-bouncing-balls-a",
     name: "NDS-Bouncing Balls-A",
     description:
-      "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (3 balls). Bounces from the start of the strip (near the controller) by default; set mirrored for a second, mirrored source at the far end, or reversed to bounce from the far end instead.",
+      "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (3 balls). Bounces from the start of the strip (the controller end, for a left-to-right strip) by default; set mirrored for a second, mirrored source at the far end, or reversed to bounce from the far end instead.",
     renderer: "nds-bouncing-balls",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
@@ -207,7 +207,7 @@ export const defaultEffects = [
     id: "nds-bouncing-balls-b",
     name: "NDS-Bouncing Balls-B",
     description:
-      "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (8 balls). Bounces from the start of the strip (near the controller) by default; set mirrored for a second, mirrored source at the far end, or reversed to bounce from the far end instead.",
+      "Gravity-and-dampening bounce simulation ported from NightDriverStrip's BouncingBallEffect (8 balls). Bounces from the start of the strip (the controller end, for a left-to-right strip) by default; set mirrored for a second, mirrored source at the far end, or reversed to bounce from the far end instead.",
     renderer: "nds-bouncing-balls",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
@@ -274,7 +274,7 @@ export const defaultEffects = [
     id: "nds-fire",
     name: "Fire",
     description:
-      'Heat-diffusion fire simulation ported from NightDriverStrip\'s FireEffect ("Medium Fire"). A single source burns from the controller end of each strip and upward from the bottom of a matrix (Reversed flips both); on a canvas with several parallel strips, neighboring rows blend together into one connected fire. Palette picks the color family as sparks cool: red (white/yellow/red), green (white/yellow/green) or blue (white/cyan/blue).',
+      'Heat-diffusion fire simulation ported from NightDriverStrip\'s FireEffect ("Medium Fire"). A single source burns from the controller end of each left-to-right strip and upward from the bottom of a matrix (Reversed flips both); on a canvas with several parallel strips, neighboring rows blend together into one connected fire. Palette picks the color family as sparks cool: red (white/yellow/red), green (white/yellow/green) or blue (white/cyan/blue).',
     renderer: "fire",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
@@ -646,7 +646,7 @@ export const defaultEffects = [
     id: "musical-fire",
     name: "Musical Fire",
     description:
-      "Heat-diffusion fire that throws extra sparks on each detected beat - ported from NightDriverStrip's MusicalPaletteFire. Bounces from the start of the strip (near the controller) by default, same as Fire; set mirrored for a second, mirrored source at the far end, or reversed to burn from the far end instead.",
+      "Heat-diffusion fire that throws extra sparks on each detected beat - ported from NightDriverStrip's MusicalPaletteFire. Bounces from the start of the strip (the controller end, for a left-to-right strip) by default, same as Fire; set mirrored for a second, mirrored source at the far end, or reversed to burn from the far end instead.",
     renderer: "musical-fire",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },

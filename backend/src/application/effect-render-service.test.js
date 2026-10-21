@@ -12,6 +12,7 @@ import {
   densityScaledPerCell,
   __resetSimulationCachesForTests,
 } from "./effect-render-service.js";
+import { mapCanvasFrame } from "../domain/canvases/canvas.js";
 
 // fire/classic-fire/musical-fire/spectrum-band share module-level simulation
 // caches (see fireHeatCache/fireGridCache in effect-render-service.js) that
@@ -689,7 +690,7 @@ test("fire's palette parameter recolors the heat ramp", () => {
   assert.deepEqual(renderWith("unknown"), red);
 });
 
-test("fire burns from LED 0 of each parallel strip when not reversed, whatever the mapping's own reversed", () => {
+test("a parallel strip's Direction flips which end of the strip fire burns from", () => {
   const service = new EffectRenderService();
   const width = 120;
   const capped = fireParameters({
@@ -699,7 +700,8 @@ test("fire burns from LED 0 of each parallel strip when not reversed, whatever t
   });
   const brightness = (pixels) =>
     pixels.reduce((sum, [r, g, b]) => sum + r + g + b, 0);
-  for (const mappingReversed of [false, true]) {
+  // LED order, as mapCanvasFrame sends it to the controller.
+  const ledsFor = (mappingReversed, timeSeconds) => {
     const canvas = {
       width,
       height: 1,
@@ -716,22 +718,30 @@ test("fire burns from LED 0 of each parallel strip when not reversed, whatever t
         },
       ],
     };
+    const frame = service.render({
+      effect: { renderer: "fire", parameters: capped },
+      canvas,
+      parameters: { timeSeconds },
+    });
+    return mapCanvasFrame(canvas, frame).get("c1")[0].pixels;
+  };
+  for (const mappingReversed of [false, true]) {
     let start = 0;
     let end = 0;
     for (const timeSeconds of [3, 7.5, 12, 30]) {
-      const frame = service.render({
-        effect: { renderer: "fire", parameters: capped },
-        canvas,
-        parameters: { timeSeconds },
-      });
-      // Canvas order -> LED order, the way the canvas mapping sends it.
-      const leds = mappingReversed ? [...frame.pixels].reverse() : frame.pixels;
+      const leds = ledsFor(mappingReversed, timeSeconds);
       start += brightness(leds.slice(0, 10));
       end += brightness(leds.slice(-10));
     }
-    assert.ok(start > 0, `mapping reversed=${mappingReversed}: LED 0 end should be lit`);
-    assert.equal(end, 0, `mapping reversed=${mappingReversed}: far end should stay dark`);
+    // Left to right: base at LED 0. Right to left: LED 0 is the strip's
+    // right end on the canvas, so the base - still at the canvas's left -
+    // lands at the far LED end instead.
+    const [lit, dark] = mappingReversed ? [end, start] : [start, end];
+    assert.ok(lit > 0, `mapping reversed=${mappingReversed}: base end should be lit`);
+    assert.equal(dark, 0, `mapping reversed=${mappingReversed}: tip end should stay dark`);
   }
+  // Same effect state, just mirrored LED for LED.
+  assert.deepEqual(ledsFor(true, 12), [...ledsFor(false, 12)].reverse());
 });
 
 test("fire blends neighboring rows together when neighborBlend is enabled", () => {

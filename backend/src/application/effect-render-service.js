@@ -170,7 +170,13 @@ function parallelCoordinates(mapping) {
     if (mapping.layout === "serpentine" && row % 2 === 1) currentRow.reverse();
     coordinates.push(...currentRow);
   }
-  return mapping.reversed ? coordinates.reverse() : coordinates;
+  // Deliberately ignores mapping.reversed: a strip's render is laid onto
+  // the canvas left to right, and mapCanvasFrame applies `reversed` when it
+  // reads the strip back out in LED order - so a Right-to-left strip shows
+  // the effect mirrored, as its Direction setting promises. Reversing here
+  // as well used to cancel that out, leaving Direction with no effect on
+  // the LEDs at all (only on the preview).
+  return coordinates;
 }
 
 function stableSeed(value) {
@@ -922,11 +928,10 @@ const renderers = {
     // buffer, after `reversed` has been applied. axisPos runs from the
     // flame's cool tip (0) to its hot, spark-fed base (flameAxisSimSize-1),
     // so its "ascend progress" (0 = the base) is the axis run in reverse.
-    // Unreversed (the default), that base is LED 0 on a strip - the end
-    // nearest the controller - and the physical bottom on a matrix
-    // (matrixAscendToY). A parallel mapping's own `reversed` can't stand in
-    // for this: it flips the strip's place on the canvas and its LED order
-    // together, which cancel out on the strip itself.
+    // Unreversed (the default), that base is the strip's left end on the
+    // canvas - LED 0, nearest the controller, unless the strip's mapping
+    // Direction is Right to left - and the physical bottom on a matrix
+    // (matrixAscendToY).
     const flameAxisIndex = (pos) => {
       const ascendPos = flameAxisSimSize - 1 - pos;
       return isMatrix
