@@ -21,6 +21,7 @@ function EffectSelector({
   const [fps, setFps] = useState(20);
   const [friendlyName, setFriendlyName] = useState("");
   const [draggedEffectId, setDraggedEffectId] = useState(null);
+  const [trueRandom, setTrueRandom] = useState(null);
 
   const effect = effects.find((item) => item.id === effectId);
   function defaultParameters(currentEffect) {
@@ -53,6 +54,26 @@ function EffectSelector({
     return Number.isInteger(stored) && stored >= 1 && stored <= 60
       ? stored
       : (currentEffect.defaultFps ?? 20);
+  }
+
+  useEffect(() => {
+    let active = true;
+    apiClient
+      .getSettings()
+      .then((settings) => active && setTrueRandom(settings.trueRandom))
+      .catch((requestError) => active && onError(requestError.message));
+    return () => {
+      active = false;
+    };
+  }, [onError]);
+
+  async function changeRandomness(nextTrueRandom) {
+    try {
+      const settings = await apiClient.updateSettings({ trueRandom: nextTrueRandom });
+      setTrueRandom(settings.trueRandom);
+    } catch (requestError) {
+      onError(requestError.message);
+    }
   }
 
   useEffect(() => {
@@ -295,6 +316,21 @@ function EffectSelector({
             <p className="eyebrow">Canvas playback</p>
             <h2>Run effects</h2>
           </div>
+          {trueRandom !== null && (
+            <label
+              className="randomness-setting"
+              title="True random draws a fresh seed from the Pi's hardware random source each time an effect starts, so no two runs look alike. Pseudo random reuses fixed seeds, so a run repeats exactly - for testing and regression. Applies the next time an effect starts."
+            >
+              Randomness
+              <select
+                value={trueRandom ? "true" : "pseudo"}
+                onChange={(event) => changeRandomness(event.target.value === "true")}
+              >
+                <option value="true">True random</option>
+                <option value="pseudo">Pseudo random (repeatable)</option>
+              </select>
+            </label>
+          )}
           <span className="count-badge">{canvases.length} canvases</span>
         </div>
         <div className="canvas-playback-list">

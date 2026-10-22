@@ -233,6 +233,13 @@ body::after {
 .canvas-playback-heading h2 {
   margin: 0;
 }
+.randomness-setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 0.85rem;
+}
 .canvas-playback-list {
   display: grid;
   gap: 6px;

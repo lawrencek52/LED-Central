@@ -1865,3 +1865,35 @@ test("halloween lightning flashes every strip at once, and can be turned off", (
   }
   assert.ok(flashes > 0, "3 strikes a minute should flash within two minutes");
 });
+
+test("a session seed of 0 leaves every effect exactly as before", () => {
+  const service = new EffectRenderService();
+  for (const timeSeconds of [1, 5.5, 20]) {
+    const plain = halloweenStrips(service, { strips: 3, timeSeconds });
+    const zero = halloweenStrips(service, { strips: 3, timeSeconds, parameters: { sessionSeed: 0 } });
+    assert.deepEqual(zero, plain);
+  }
+});
+
+test("a session seed gives a different Halloween, with lightning still on every strip at once", () => {
+  const service = new EffectRenderService();
+  const glow = { eyeCount: 0, lightningPerMinute: 0 };
+  assert.notDeepEqual(
+    halloweenStrips(service, { strips: 2, timeSeconds: 10, parameters: { ...glow, sessionSeed: 12345 } }),
+    halloweenStrips(service, { strips: 2, timeSeconds: 10, parameters: glow }),
+  );
+  const isFlash = (strip) => strip.every(([, , b]) => b > 100);
+  let flashes = 0;
+  let movedFlash = false;
+  for (let timeSeconds = 0; timeSeconds < 120; timeSeconds += 0.05) {
+    const seeded = halloweenStrips(service, {
+      strips: 3, width: 60, timeSeconds, parameters: { eyeCount: 0, sessionSeed: 12345 },
+    }).map(isFlash);
+    assert.ok(seeded.every((value) => value === seeded[0]), `strips disagree at ${timeSeconds}s`);
+    if (seeded[0]) flashes += 1;
+    const [unseeded] = halloweenStrips(service, { width: 60, timeSeconds, parameters: { eyeCount: 0 } });
+    if (seeded[0] !== isFlash(unseeded)) movedFlash = true;
+  }
+  assert.ok(flashes > 0);
+  assert.ok(movedFlash, "the session seed should move the lightning strikes");
+});

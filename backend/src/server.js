@@ -25,6 +25,9 @@ import { CanvasService } from "./application/canvas-service.js";
 import { SqliteControllerRepository } from "./infrastructure/persistence/sqlite-controller-repository.js";
 import { SqliteCanvasRepository } from "./infrastructure/persistence/sqlite-canvas-repository.js";
 import { SqlitePlaybackRepository } from "./infrastructure/persistence/sqlite-playback-repository.js";
+import { SqliteSettingsRepository } from "./infrastructure/persistence/sqlite-settings-repository.js";
+import { SettingsService } from "./application/settings-service.js";
+import { createSettingsRouter } from "./api/settings.js";
 import { Metrics } from "./infrastructure/metrics/metrics.js";
 import { createMetricsRouter } from "./api/metrics.js";
 import { createAuthMiddleware } from "./middleware/auth.js";
@@ -64,6 +67,11 @@ export function createApp({
   playbackRepository = new SqlitePlaybackRepository({
     databasePath: config.effectDatabasePath,
   }),
+  settingsService = new SettingsService({
+    repository: new SqliteSettingsRepository({
+      databasePath: config.effectDatabasePath,
+    }),
+  }),
   audioService = new CanvasAudioService({ telemetrySource: gateway }),
   weatherService = new WeatherService(),
 } = {}) {
@@ -88,6 +96,7 @@ export function createApp({
       playbackRepository,
       audioService,
       weatherService,
+      settingsService,
     });
   // Ring the matrices' speakers when the weather service sees a new alert.
   const weatherAlertNotifier = new WeatherAlertNotifier({
@@ -155,6 +164,7 @@ export function createApp({
     createDistributionRouter({ distributionService, canvasService }),
   );
   app.use("/api/effects", createEffectRouter({ effectService }));
+  app.use("/api/settings", createSettingsRouter({ settingsService }));
   app.use(
     "/api/canvases",
     createCanvasRouter({

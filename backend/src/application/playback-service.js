@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import { EffectRenderError } from "./effect-render-service.js";
 
@@ -18,6 +19,10 @@ export class PlaybackService {
     weatherService = null,
     audioQueueFrames = 2,
     maxCatchUpFrames = 4,
+    settingsService = null,
+    // A fresh seed for each run when trueRandom is on. crypto draws from the
+    // OS's random source - on the Pi, the kernel pool its hardware RNG feeds.
+    seedSource = () => randomInt(1, 2 ** 31),
   }) {
     this.canvasService = canvasService;
     this.effectService = effectService;
@@ -34,6 +39,8 @@ export class PlaybackService {
     this.weatherService = weatherService;
     this.audioQueueFrames = audioQueueFrames;
     this.maxCatchUpFrames = maxCatchUpFrames;
+    this.settingsService = settingsService;
+    this.seedSource = seedSource;
     this.sessions = new Map();
     this.timers = new Map();
     this.activeByCanvas = new Map();
@@ -126,6 +133,7 @@ export class PlaybackService {
     if (previousSession) this.stop(previousSession.id);
 
     const frameRate = this.effectiveFrameRate(effect, canvas, fps);
+    const sessionSeed = this.nextSessionSeed();
     const intervalMs = this.frameIntervalMs(frameRate);
     const targetQueueMs = this.queueDepthMs(effect, frameRate);
     const startedAt = this.now();
@@ -141,6 +149,7 @@ export class PlaybackService {
       firstFrameAt,
       count: this.queueFrameCount(frameRate, targetQueueMs),
       frameRate,
+      sessionSeed,
     });
     const distribution = await this.distributeFramesOrOffline({
       canvas,
@@ -158,6 +167,7 @@ export class PlaybackService {
       distribution,
       frameCount: frames.length,
       frameRate,
+      sessionSeed,
     };
     this.scheduleFrames({ session, canvas, effect });
     this.sessions.set(session.id, session);
@@ -211,17 +221,27 @@ export class PlaybackService {
     }
   }
 
+  // Mixed into every random choice an effect makes for this run (see
+  // mixSessionSeed in effect-render-service.js). 0 - trueRandom off, or no
+  // settings service (tests) - leaves every effect on its fixed seeds, so
+  // runs repeat exactly.
+  nextSessionSeed() {
+    return this.settingsService?.get().trueRandom ? this.seedSource() : 0;
+  }
+
   renderFrame({
     effect,
     canvas,
     parameters,
     startedAt,
     timestamp = this.now(),
+    sessionSeed = 0,
   }) {
     const effectParameters = {
       ...parameters,
       timeSeconds: (timestamp - startedAt) / 1000,
     };
+    if (sessionSeed) effectParameters.sessionSeed = sessionSeed;
     if (
       this.requiresAudio(effect) ||
       (this.usesAudioIfAvailable(effect) && this.audioService?.hasAudioCapability(canvas))
@@ -267,12 +287,14 @@ export class PlaybackService {
     firstFrameAt,
     count,
     frameRate = this.frameRate,
+    sessionSeed = 0,
   }) {
     return Array.from({ length: count }, (_, index) =>
       this.renderFrame({
         effect,
         canvas,
         parameters,
+        sessionSeed,
         startedAt,
         timestamp: firstFrameAt + index * this.frameIntervalMs(frameRate),
       }),
@@ -399,6 +421,7 @@ export class PlaybackService {
             firstFrameAt,
             count: framesNeeded,
             frameRate: session.frameRate,
+            sessionSeed: session.sessionSeed,
           });
           session.lastFrameAt = frames[frames.length - 1].timestamp;
           const distribution = await this.distributeFramesOrOffline({

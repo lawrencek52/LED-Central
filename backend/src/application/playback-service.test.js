@@ -783,3 +783,36 @@ test("restoring playback while its controllers are offline keeps the session and
   assert.equal(intents.length, 1);
   service.stop(session.id);
 });
+
+test("true random gives each run a fresh session seed; pseudo random gives none", async () => {
+  for (const trueRandom of [true, false]) {
+    const seen = [];
+    let nextSeed = 1000;
+    const renderService = new EffectRenderService();
+    const render = renderService.render.bind(renderService);
+    renderService.render = (options) => {
+      seen.push(options.parameters.sessionSeed);
+      return render(options);
+    };
+    const service = new PlaybackService({
+      ...baseServiceOptions(),
+      renderService,
+      distributionService: { distributeCanvasFrame: async () => ({ status: "sent" }) },
+      settingsService: { get: () => ({ trueRandom }) },
+      seedSource: () => (nextSeed += 1),
+    });
+    const first = await service.start({ canvasId: "canvas-1", effectId: "solid" });
+    const firstRunSeeds = new Set(seen);
+    const second = await service.start({ canvasId: "canvas-1", effectId: "solid" });
+    service.stop(second.id);
+    if (trueRandom) {
+      assert.equal(first.sessionSeed, 1001);
+      assert.equal(second.sessionSeed, 1002);
+      assert.deepEqual([...firstRunSeeds], [1001]);
+    } else {
+      assert.equal(first.sessionSeed, 0);
+      assert.equal(second.sessionSeed, 0);
+      assert.ok(seen.every((seed) => seed === undefined));
+    }
+  }
+});

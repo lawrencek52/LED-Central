@@ -130,6 +130,12 @@ export const apiClient = {
       body: JSON.stringify(effect),
     }),
   getStatus: () => request("/status"),
+  getSettings: () => request("/settings"),
+  updateSettings: (settings) =>
+    request("/settings", {
+      method: "PATCH",
+      body: JSON.stringify(settings),
+    }),
   listPlayback: () => request("/playback"),
   startPlayback: (playback) =>
     request("/playback/start", {

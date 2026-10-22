@@ -62,6 +62,7 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
         stripSpacingRatio: canvas.stripSpacingRatio ?? 1,
         upIsPositiveY: matrixUpIsPositiveY(canvas.mappings?.[0]),
         ledsPerMeter: canvas.mappings?.[0]?.ledsPerMeter ?? null,
+        randomSeed: mixSessionSeed(Number(parameters.randomSeed ?? 0), parameters),
       },
       timestamp,
     });
@@ -89,7 +90,10 @@ function renderCanvasEffect({ renderer, canvas, parameters, timestamp }) {
       height: mapping.height || 1,
       parameters: {
         ...parameters,
-        randomSeed: stableSeed(`${mapping.controllerId}:${mapping.stripIndex}`),
+        randomSeed: mixSessionSeed(
+          stableSeed(`${mapping.controllerId}:${mapping.stripIndex}`),
+          parameters,
+        ),
         bandStart,
         bandEnd,
         // For an effect (like spectrum-band) that needs to simulate every
@@ -177,6 +181,18 @@ function parallelCoordinates(mapping) {
   // as well used to cancel that out, leaving Direction with no effect on
   // the LEDs at all (only on the preview).
   return coordinates;
+}
+
+// With trueRandom on, each playback run carries a fresh `sessionSeed`
+// (playback-service.js) that's mixed into every seed an effect uses: the
+// per-strip randomSeed above, and the canvas-wide fixed seeds (fireworks
+// bursts, rocket shows, spectrum-band's shared grid, Halloween lightning),
+// which all get the same mix, so strips that must agree still do. A seed of
+// 0 (pseudo mode) returns `base` untouched, so output matches the fixed-seed
+// behaviour exactly.
+function mixSessionSeed(base, parameters) {
+  const sessionSeed = Number(parameters?.sessionSeed) | 0;
+  return sessionSeed ? (base ^ sessionSeed) >>> 0 : base;
 }
 
 function stableSeed(value) {
@@ -454,7 +470,7 @@ const renderers = {
     // independent call here must derive the exact same canvas-wide event
     // sequence to agree on which rows a particle should appear on, so it
     // needs its own, unclobbered parameter name instead.
-    const randomSeed = Number(parameters.showSeed ?? 0);
+    const randomSeed = mixSessionSeed(Number(parameters.showSeed ?? 0), parameters);
     const elapsedSeconds = Number(parameters.timeSeconds ?? timestamp / 1000);
     const startedAtMs = timestamp - elapsedSeconds * 1000;
     const pixels = Array.from({ length: width * height }, () => [0, 0, 0]);
@@ -594,7 +610,9 @@ const renderers = {
       const cycleIndex = Math.floor(
         (elapsedSeconds + cycleOffset) / cycleSeconds,
       );
-      const rng = mulberry32(burst * 7919 + cycleIndex * 104729 + 1);
+      const rng = mulberry32(
+        mixSessionSeed(burst * 7919 + cycleIndex * 104729 + 1, parameters),
+      );
       const burstPosition = rng() * (width - 1);
       const color = paletteFromIndex(burst, burstCount);
       const age = cyclePosition;
@@ -1397,6 +1415,7 @@ const renderers = {
     const flash = lightningIntensityAt(
       seconds,
       clamp(Number(parameters.lightningPerMinute ?? 3), 0, 30),
+      mixSessionSeed(0x11e7, parameters),
     );
     if (flash > 0) {
       const bolt = parseColor(parameters.lightningColor ?? "#d8ccff");
@@ -1953,7 +1972,7 @@ const renderers = {
           // correctly; varying the base seed per mapping would make each
           // call simulate a different random universe for the "same"
           // neighbor rows, breaking the correlation instead of producing it.
-          seedSalt: 47,
+          seedSalt: mixSessionSeed(47, parameters),
           neighborBlend,
           rowStep: (h, rng) => {
             for (let i = 0; i < flameAxisSimSize; i += 1) {
@@ -2147,13 +2166,13 @@ function drawHalloweenEyes(pixels, width, height, parameters, seconds, seed) {
 // least 80ms so a 20fps frame can't fall between them.
 const LIGHTNING_SLOT_SECONDS = 2;
 
-function lightningIntensityAt(seconds, perMinute) {
+function lightningIntensityAt(seconds, perMinute, seed = 0x11e7) {
   if (perMinute <= 0) return 0;
   const chance = Math.min(1, (perMinute * LIGHTNING_SLOT_SECONDS) / 60);
   const slot = Math.floor(seconds / LIGHTNING_SLOT_SECONDS);
   let intensity = 0;
   for (const strikeSlot of [slot - 1, slot]) {
-    const rng = mulberry32(hashInts(0x11e7, strikeSlot, 0xb017));
+    const rng = mulberry32(hashInts(seed, strikeSlot, 0xb017));
     if (rng() >= chance) continue;
     let at = strikeSlot * LIGHTNING_SLOT_SECONDS + rng() * 1.2;
     const flashes = 2 + Math.floor(rng() * 3);
