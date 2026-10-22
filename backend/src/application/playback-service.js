@@ -216,6 +216,9 @@ export class PlaybackService {
       try {
         await this.start(intent);
       } catch (error) {
+        console.warn(
+          `[playback] couldn't restore ${intent.effectId} on canvas ${intent.canvasId}, dropping it: ${error.message}`,
+        );
         this.playbackRepository.remove(intent.canvasId);
       }
     }
