@@ -52,10 +52,20 @@ function validateCanvasPayload(body, { partial = false } = {}) {
       payload.stripSpacingRatio <= 0)
   )
     errors.stripSpacingRatio = "must be a positive number";
+  // Host (name or IP, optionally :port) of an Arylic/LinkPlay audio streamer near this
+  // canvas, for sound effects such as Halloween's thunder; empty for none.
+  if (
+    payload.soundStreamer !== undefined &&
+    (typeof payload.soundStreamer !== "string" ||
+      (payload.soundStreamer.trim() !== "" &&
+        !/^[A-Za-z0-9.-]{1,253}(:\d{1,5})?$/.test(payload.soundStreamer.trim())))
+  )
+    errors.soundStreamer = "must be a host name or IP address, optionally with :port";
   if (
     partial &&
     !fields.some((field) => payload[field] !== undefined) &&
-    payload.stripSpacingRatio === undefined
+    payload.stripSpacingRatio === undefined &&
+    payload.soundStreamer === undefined
   )
     errors.body = "must include at least one canvas field";
   if (
@@ -89,6 +99,9 @@ function validateCanvasPayload(body, { partial = false } = {}) {
     ...(payload.stripSpacingRatio === undefined
       ? {}
       : { stripSpacingRatio: payload.stripSpacingRatio }),
+    ...(payload.soundStreamer === undefined
+      ? {}
+      : { soundStreamer: payload.soundStreamer.trim() }),
   };
 }
 

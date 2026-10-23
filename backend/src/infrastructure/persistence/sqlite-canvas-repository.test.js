@@ -18,6 +18,7 @@ test('persists canvas mappings and revisions', () => {
   assert.deepEqual(repository.get(canvas.id), {
     ...canvas,
     stripSpacingRatio: 1,
+    soundStreamer: '',
     mappings: [{
       controllerId: 'deck-one',
       stripIndex: 0,

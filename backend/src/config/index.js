@@ -8,6 +8,8 @@ const DEFAULTS = {
   port: 3001,
   apiTimeoutMs: 30000,
   effectDatabasePath: './data/led-central.db',
+  soundsDirectory: './media/sounds',
+  publicBaseUrl: '',
   authToken: '',
   logLevel: 'info',
   corsOrigins: ['*']
@@ -61,6 +63,11 @@ export function loadConfig(environment = process.env) {
       { min: 100, max: 300000 }
     ),
     effectDatabasePath: environment.EFFECT_DATABASE_PATH?.trim() || DEFAULTS.effectDatabasePath,
+    // Sound clips served at /sounds for the LAN audio streamers to fetch (media/sounds,
+    // checked in - CC0 clips only). PUBLIC_BASE_URL overrides the http://<LAN IPv4>:<port> they're
+    // told to fetch from, if auto-detection picks the wrong interface.
+    soundsDirectory: environment.SOUNDS_DIRECTORY?.trim() || DEFAULTS.soundsDirectory,
+    publicBaseUrl: environment.PUBLIC_BASE_URL?.trim() || DEFAULTS.publicBaseUrl,
     authToken: environment.AUTH_TOKEN?.trim() || DEFAULTS.authToken,
     logLevel,
     corsOrigins: origins(environment.CORS_ORIGIN ?? DEFAULTS.corsOrigins.join(','))

@@ -11,6 +11,7 @@ import {
   densityScaledMagnitude,
   densityScaledPerCell,
   __resetSimulationCachesForTests,
+  halloweenLightningStrikes,
 } from "./effect-render-service.js";
 import { mapCanvasFrame } from "../domain/canvases/canvas.js";
 import { defaultEffects } from "../domain/effects/default-effects.js";
@@ -1896,4 +1897,29 @@ test("a session seed gives a different Halloween, with lightning still on every 
   }
   assert.ok(flashes > 0);
   assert.ok(movedFlash, "the session seed should move the lightning strikes");
+});
+
+test("halloween lightning strike times match the flashes the renderer draws", () => {
+  const service = new EffectRenderService();
+  const isFlash = (strip) => strip.every(([, , b]) => b > 100);
+  for (const sessionSeed of [0, 4242]) {
+    const parameters = { eyeCount: 0, sessionSeed };
+    const strikes = halloweenLightningStrikes({ ...parameters }, 0, 120);
+    assert.ok(strikes.length > 0);
+    for (const at of strikes) {
+      const [strip] = halloweenStrips(service, { width: 40, timeSeconds: at + 0.01, parameters });
+      assert.ok(isFlash(strip), `no flash at listed strike ${at}s (seed ${sessionSeed})`);
+    }
+    // Every flash onset (dark -> flash) belongs to a listed strike: within its first
+    // second, since a strike is 2-4 flashes.
+    let wasFlash = false;
+    for (let t = 0; t < 120; t += 0.02) {
+      const [strip] = halloweenStrips(service, { width: 40, timeSeconds: t, parameters });
+      const flash = isFlash(strip);
+      if (flash && !wasFlash)
+        assert.ok(strikes.some((at) => t >= at - 0.03 && t < at + 1.2), `unlisted flash at ${t.toFixed(2)}s (seed ${sessionSeed})`);
+      wasFlash = flash;
+    }
+  }
+  assert.deepEqual(halloweenLightningStrikes({ lightningPerMinute: 0 }, 0, 120), []);
 });

@@ -2192,6 +2192,27 @@ function lightningIntensityAt(seconds, perMinute, seed = 0x11e7) {
   return intensity;
 }
 
+// Start times (seconds into the run, the same clock as lightningIntensityAt) of every
+// Halloween lightning strike between fromSeconds and toSeconds, for sound effects timed to
+// the flashes (thunder-service.js). Same slots and seeded draws as lightningIntensityAt, so the
+// two can't drift apart: each slot's first two draws decide whether it strikes and when.
+export function halloweenLightningStrikes(parameters, fromSeconds, toSeconds) {
+  const perMinute = clamp(Number(parameters.lightningPerMinute ?? 3), 0, 30);
+  if (perMinute <= 0) return [];
+  const seed = mixSessionSeed(0x11e7, parameters);
+  const chance = Math.min(1, (perMinute * LIGHTNING_SLOT_SECONDS) / 60);
+  const strikes = [];
+  const firstSlot = Math.floor(fromSeconds / LIGHTNING_SLOT_SECONDS);
+  const lastSlot = Math.floor(toSeconds / LIGHTNING_SLOT_SECONDS);
+  for (let slot = firstSlot; slot <= lastSlot; slot += 1) {
+    const rng = mulberry32(hashInts(seed, slot, 0xb017));
+    if (rng() >= chance) continue;
+    const at = slot * LIGHTNING_SLOT_SECONDS + rng() * 1.2;
+    if (at >= fromSeconds && at < toSeconds) strikes.push(at);
+  }
+  return strikes;
+}
+
 function hashInts(a, b, c) {
   let h =
     Math.imul(a | 0, 0x27d4eb2d) ^

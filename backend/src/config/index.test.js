@@ -9,6 +9,8 @@ test('loads defaults for an empty environment', () => {
     port: 3001,
     apiTimeoutMs: 30000,
     effectDatabasePath: './data/led-central.db',
+    soundsDirectory: './media/sounds',
+    publicBaseUrl: '',
     authToken: '',
     logLevel: 'info',
     corsOrigins: ['*']
@@ -31,6 +33,8 @@ test('parses and normalizes configured values', () => {
       port: 8080,
       apiTimeoutMs: 5000,
       effectDatabasePath: './data/led-central.db',
+      soundsDirectory: './media/sounds',
+      publicBaseUrl: '',
       authToken: '',
       logLevel: 'warn',
       corsOrigins: ['https://led.example', 'https://admin.example']
@@ -47,6 +51,8 @@ test('accepts wildcard and LAN-facing development origins', () => {
       port: 3001,
       apiTimeoutMs: 30000,
       effectDatabasePath: './data/led-central.db',
+      soundsDirectory: './media/sounds',
+      publicBaseUrl: '',
       authToken: '',
       logLevel: 'info',
       corsOrigins: ['*']

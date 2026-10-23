@@ -1,4 +1,6 @@
 import express from "express";
+import os from "node:os";
+import path from "node:path";
 import cors from "cors";
 import { createServer } from "node:http";
 import { v4 as uuidv4 } from "uuid";
@@ -28,6 +30,7 @@ import { SqlitePlaybackRepository } from "./infrastructure/persistence/sqlite-pl
 import { SqliteSettingsRepository } from "./infrastructure/persistence/sqlite-settings-repository.js";
 import { SettingsService } from "./application/settings-service.js";
 import { createSettingsRouter } from "./api/settings.js";
+import { ThunderService } from "./application/thunder-service.js";
 import { Metrics } from "./infrastructure/metrics/metrics.js";
 import { createMetricsRouter } from "./api/metrics.js";
 import { createAuthMiddleware } from "./middleware/auth.js";
@@ -139,6 +142,9 @@ export function createApp({
     );
     next();
   });
+  // Sound clips for the LAN audio streamers (e.g. Halloween's thunder). Outside /api,
+  // since the streamers fetch them with a plain URL and can't send the auth token.
+  app.use("/sounds", express.static(path.resolve(config.soundsDirectory)));
   app.use("/api", createAuthMiddleware({ token: config.authToken }));
 
   app.get("/api/health", (req, res) => {
@@ -259,6 +265,25 @@ async function runStartupSequence(app) {
   );
 
   await playbackService.restore();
+
+  const thunder = new ThunderService({
+    playbackService,
+    canvasService,
+    effectService,
+    soundUrl: `${publicBaseUrl()}/sounds/thunder.wav`,
+  });
+  thunder.start();
+  console.log(`Thunder sound: ${thunder.soundUrl}`);
+}
+
+// The URL LAN devices (the audio streamers) can reach this server at: PUBLIC_BASE_URL,
+// or this host's first non-internal IPv4 address.
+function publicBaseUrl() {
+  if (config.publicBaseUrl) return config.publicBaseUrl.replace(/\/$/, "");
+  const address = Object.values(os.networkInterfaces())
+    .flat()
+    .find((entry) => entry && entry.family === "IPv4" && !entry.internal)?.address;
+  return `http://${address ?? "localhost"}:${config.port}`;
 }
 
 // Start server

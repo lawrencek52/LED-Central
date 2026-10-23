@@ -696,7 +696,7 @@ export const defaultEffects = [
     id: "halloween",
     name: "Halloween",
     description:
-      "Orange and black: pools of flickering jack-o'-lantern glow drift along the strip with darkness between them. Pairs of creepy eyes open at random spots in the dark, stare, blink and fade away, and every so often a lightning strike flashes across every strip at once. glowAmount sets how much of the strip glows; eyeCount is how many pairs can watch at once per strip (0 for none); lightningPerMinute 0 turns the lightning off. Sizes are in LEDs on a 60 LED/m strip, scaled to each strip's real density.",
+      "Orange and black: pools of flickering jack-o'-lantern glow drift along the strip with darkness between them. Pairs of creepy eyes open at random spots in the dark, stare, blink and fade away, and every so often a lightning strike flashes across every strip at once. glowAmount sets how much of the strip glows; eyeCount is how many pairs can watch at once per strip (0 for none); lightningPerMinute 0 turns the lightning off. With thunder on, each strike also plays a thunder clip on the canvas's sound streamer (set in the Canvas Builder); thunderLeadMs is how far ahead of the flash the play command goes out, to cover the streamer's start-up delay (about 0.1-0.3 s on an Arylic S10+), so playback starts with the flash and the clip's own lead-in silence puts the crack just after it. Raise it if the thunder comes late, lower it if it comes early. Sizes are in LEDs on a 60 LED/m strip, scaled to each strip's real density.",
     renderer: "halloween",
     parameters: {
       brightness: { type: "number", min: 0, max: 100, default: 100 },
@@ -710,6 +710,8 @@ export const defaultEffects = [
       eyeGap: { type: "number", min: 1, max: 12, default: 4 },
       lightningPerMinute: { type: "number", min: 0, max: 30, default: 3 },
       lightningColor: { type: "color", default: "#d8ccff" },
+      thunder: { type: "boolean", default: true },
+      thunderLeadMs: { type: "number", min: 0, max: 5000, default: 300 },
     },
     tags: ["animated", "holiday"],
   },

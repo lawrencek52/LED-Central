@@ -25,6 +25,9 @@ export class SqliteCanvasRepository {
     if (!columns.some(column => column.name === 'strip_spacing_ratio')) {
       this.database.exec('ALTER TABLE canvases ADD COLUMN strip_spacing_ratio REAL NOT NULL DEFAULT 1');
     }
+    if (!columns.some(column => column.name === 'sound_streamer')) {
+      this.database.exec("ALTER TABLE canvases ADD COLUMN sound_streamer TEXT NOT NULL DEFAULT ''");
+    }
   }
 
   list() {
@@ -38,20 +41,22 @@ export class SqliteCanvasRepository {
 
   save(canvas) {
     this.database.prepare(`
-      INSERT INTO canvases (id, name, width, height, mappings_json, strip_spacing_ratio, revision, created_at, updated_at)
-      VALUES (@id, @name, @width, @height, @mappingsJson, @stripSpacingRatio, @revision, @createdAt, @updatedAt)
+      INSERT INTO canvases (id, name, width, height, mappings_json, strip_spacing_ratio, sound_streamer, revision, created_at, updated_at)
+      VALUES (@id, @name, @width, @height, @mappingsJson, @stripSpacingRatio, @soundStreamer, @revision, @createdAt, @updatedAt)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         width = excluded.width,
         height = excluded.height,
         mappings_json = excluded.mappings_json,
         strip_spacing_ratio = excluded.strip_spacing_ratio,
+        sound_streamer = excluded.sound_streamer,
         revision = excluded.revision,
         updated_at = excluded.updated_at
     `).run({
       ...canvas,
       mappingsJson: JSON.stringify(canvas.mappings),
       stripSpacingRatio: Number(canvas.stripSpacingRatio) > 0 ? Number(canvas.stripSpacingRatio) : 1,
+      soundStreamer: canvas.soundStreamer ?? '',
       createdAt: canvas.createdAt,
       updatedAt: canvas.updatedAt
     });
@@ -75,6 +80,7 @@ function toCanvas(row) {
     height: row.height,
     mappings: JSON.parse(row.mappings_json),
     stripSpacingRatio: row.strip_spacing_ratio,
+    soundStreamer: row.sound_streamer ?? '',
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at

@@ -9,6 +9,7 @@ const blankCanvas = {
   height: 1,
   mode: "series",
   stripSpacingRatio: 1,
+  soundStreamer: "",
   wiring: "serpentine",
   originCorner: "top-left",
   axis: "horizontal",
@@ -192,6 +193,7 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
           ...mappings.map((mapping) => mapping.y + mapping.height),
         ),
         stripSpacingRatio: Number(draft.stripSpacingRatio),
+        soundStreamer: (draft.soundStreamer ?? "").trim(),
         mappings,
       };
       const saved =
@@ -464,6 +466,18 @@ function CanvasBuilder({ controllers, canvases, onCanvasesChange, onError }) {
                 />
               </label>
             )}
+            <label>
+              Sound streamer
+              <input
+                type="text"
+                placeholder="none"
+                value={draft.soundStreamer ?? ""}
+                onChange={(event) =>
+                  setDraft({ ...draft, soundStreamer: event.target.value })
+                }
+                title="IP address or host name of an Arylic/LinkPlay audio streamer near this canvas, for sound effects such as Halloween's thunder. Leave empty for none."
+              />
+            </label>
             <button
               className="secondary-button"
               type="button"

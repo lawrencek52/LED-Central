@@ -1,0 +1,86 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { ThunderService } from "./thunder-service.js";
+import { halloweenLightningStrikes } from "./effect-render-service.js";
+import { defaultEffects } from "../domain/effects/default-effects.js";
+
+const halloween = defaultEffects.find((effect) => effect.id === "halloween");
+
+function harness({ soundStreamer = "192.168.86.80", parameters = {}, effectId = "halloween", promptReply = "OK", playerStatus = "stop" } = {}) {
+  const startedAt = Date.parse("2026-10-22T20:00:00Z");
+  let now = startedAt;
+  const session = { id: "s1", status: "playing", canvasId: "deck11", effectId, parameters, sessionSeed: 777, startedAt: new Date(startedAt).toISOString() };
+  const timers = [];
+  const requests = [];
+  const service = new ThunderService({
+    playbackService: { list: () => [session] },
+    canvasService: { get: () => ({ id: "deck11", soundStreamer }) },
+    effectService: { get: (id) => (id === "halloween" ? halloween : { id, renderer: "fire", parameters: {} }) },
+    soundUrl: "http://192.168.86.67:3001/sounds/thunder.wav",
+    fetchImpl: async (url) => {
+      requests.push(url);
+      if (url.includes("getPlayerStatus")) return { text: async () => JSON.stringify({ status: playerStatus }) };
+      return { text: async () => (url.includes("playPromptUrl") ? promptReply : "OK") };
+    },
+    now: () => now,
+    setTimer: (callback, delay) => timers.push({ at: now + delay, callback }),
+    log: { warn() {} },
+  });
+  return {
+    service, session, timers, requests, startedAt,
+    advance(ms) { now += ms; },
+    async runDue() {
+      for (const timer of timers.filter((t) => t.at <= now && !t.done)) {
+        timer.done = true;
+        await timer.callback();
+      }
+    },
+  };
+}
+
+test("thunder plays on the canvas's streamer each strike, thunderLeadMs before it", async () => {
+  const h = harness({ parameters: { thunderLeadMs: 1500 } });
+  const expected = halloweenLightningStrikes({ lightningPerMinute: 3, sessionSeed: 777 }, 0, 120)
+    .map((at) => h.startedAt + at * 1000 - 1500);
+  for (let elapsed = 0; elapsed < 120_000; elapsed += 500) {
+    h.service.tick();
+    h.advance(500);
+  }
+  assert.ok(expected.length > 0);
+  // Each strike scheduled exactly once, at its send time (strikes within the lead of the start
+  // are sent immediately, since their send time is already due).
+  const scheduled = h.timers.map((timer) => timer.at).sort((a, b) => a - b);
+  const reachable = expected.filter((sendAt) => sendAt >= h.startedAt - 250);
+  assert.equal(scheduled.length, reachable.length);
+  scheduled.forEach((at, i) => assert.ok(Math.abs(at - Math.max(reachable[i], h.startedAt)) <= 500, `${at} vs ${reachable[i]}`));
+});
+
+test("thunder ducks music with playPromptUrl, and otherwise (or if refused) uses play", async () => {
+  for (const [playerStatus, promptReply, commands] of [
+    ["play", "OK", ["playPromptUrl"]],
+    ["play", "Failed", ["playPromptUrl", "setPlayerCmd:play"]],
+    ["stop", "OK", ["setPlayerCmd:play"]],
+  ]) {
+    const h = harness({ playerStatus, promptReply });
+    while (h.timers.length === 0) { h.service.tick(); h.advance(500); }
+    h.advance(10_000);
+    await h.runDue();
+    const first = h.requests.filter((url) => !url.includes("getPlayerStatus")).slice(0, commands.length);
+    assert.deepEqual(first.map((url) => url.match(/command=(playPromptUrl|setPlayerCmd:play)/)[1]), commands);
+    assert.ok(first.every((url) => url.startsWith("http://192.168.86.80/httpapi.asp?command=") && url.endsWith(":http://192.168.86.67:3001/sounds/thunder.wav")));
+  }
+});
+
+test("no thunder without a streamer, with thunder off, for other effects, or after the run stops", async () => {
+  for (const options of [{ soundStreamer: "" }, { parameters: { thunder: false } }, { effectId: "fire" }]) {
+    const h = harness(options);
+    for (let i = 0; i < 240; i += 1) { h.service.tick(); h.advance(500); }
+    assert.equal(h.timers.length, 0, JSON.stringify(options));
+  }
+  const h = harness();
+  while (h.timers.length === 0) { h.service.tick(); h.advance(500); }
+  h.session.status = "stopped";
+  h.advance(10_000);
+  await h.runDue();
+  assert.equal(h.requests.length, 0);
+});
