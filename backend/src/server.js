@@ -270,10 +270,15 @@ async function runStartupSequence(app) {
     playbackService,
     canvasService,
     effectService,
-    soundUrl: `${publicBaseUrl()}/sounds/thunder.wav`,
+    controllerService,
+    controllerUrl: (controller, urlPath) => gateway.controllerUrl(controller, urlPath),
+    soundUrls: {
+      normal: `${publicBaseUrl()}/sounds/thunder.wav`,
+      dim: `${publicBaseUrl()}/sounds/thunder-dim.wav`,
+    },
   });
   thunder.start();
-  console.log(`Thunder sound: ${thunder.soundUrl}`);
+  console.log(`Thunder sound: ${thunder.soundUrls.normal} (dimmed: ${thunder.soundUrls.dim})`);
 }
 
 // The URL LAN devices (the audio streamers) can reach this server at: PUBLIC_BASE_URL,

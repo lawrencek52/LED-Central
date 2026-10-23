@@ -6,7 +6,10 @@ import { defaultEffects } from "../domain/effects/default-effects.js";
 
 const halloween = defaultEffects.find((effect) => effect.id === "halloween");
 
-function harness({ soundStreamer = "192.168.86.80", parameters = {}, effectId = "halloween", promptReply = "OK", playerStatus = "stop" } = {}) {
+const NORMAL = "http://192.168.86.67:3001/sounds/thunder.wav";
+const DIM = "http://192.168.86.67:3001/sounds/thunder-dim.wav";
+
+function harness({ soundStreamer = "192.168.86.80", parameters = {}, effectId = "halloween", promptReply = "OK", playerStatus = "stop", scheduleStates = null } = {}) {
   const startedAt = Date.parse("2026-10-22T20:00:00Z");
   let now = startedAt;
   const session = { id: "s1", status: "playing", canvasId: "deck11", effectId, parameters, sessionSeed: 777, startedAt: new Date(startedAt).toISOString() };
@@ -14,17 +17,25 @@ function harness({ soundStreamer = "192.168.86.80", parameters = {}, effectId = 
   const requests = [];
   const service = new ThunderService({
     playbackService: { list: () => [session] },
-    canvasService: { get: () => ({ id: "deck11", soundStreamer }) },
+    canvasService: { get: () => ({ id: "deck11", soundStreamer, mappings: Object.keys(scheduleStates ?? { deck1: 0 }).map((controllerId) => ({ controllerId })) }) },
+    controllerService: scheduleStates ? { get: (id) => ({ id, host: `${id}.local` }) } : null,
+    controllerUrl: scheduleStates ? async (controller, path) => `http://${controller.host}${path}` : null,
     effectService: { get: (id) => (id === "halloween" ? halloween : { id, renderer: "fire", parameters: {} }) },
-    soundUrl: "http://192.168.86.67:3001/sounds/thunder.wav",
+    soundUrls: { normal: NORMAL, dim: DIM },
     fetchImpl: async (url) => {
+      const statsFor = url.match(/^http:\/\/(\w+)\.local\/statistics\/dynamic$/);
+      if (statsFor) {
+        const state = scheduleStates[statsFor[1]];
+        if (state instanceof Error) throw state;
+        return { json: async () => ({ SCHEDULE_STATE: state }) };
+      }
       requests.push(url);
       if (url.includes("getPlayerStatus")) return { text: async () => JSON.stringify({ status: playerStatus }) };
       return { text: async () => (url.includes("playPromptUrl") ? promptReply : "OK") };
     },
     now: () => now,
     setTimer: (callback, delay) => timers.push({ at: now + delay, callback }),
-    log: { warn() {} },
+    log: { warn() {}, info() {} },
   });
   return {
     service, session, timers, requests, startedAt,
@@ -67,7 +78,7 @@ test("thunder ducks music with playPromptUrl, and otherwise (or if refused) uses
     await h.runDue();
     const first = h.requests.filter((url) => !url.includes("getPlayerStatus")).slice(0, commands.length);
     assert.deepEqual(first.map((url) => url.match(/command=(playPromptUrl|setPlayerCmd:play)/)[1]), commands);
-    assert.ok(first.every((url) => url.startsWith("http://192.168.86.80/httpapi.asp?command=") && url.endsWith(":http://192.168.86.67:3001/sounds/thunder.wav")));
+    assert.ok(first.every((url) => url.startsWith("http://192.168.86.80/httpapi.asp?command=") && url.endsWith(`:${NORMAL}`)));
   }
 });
 
@@ -83,4 +94,24 @@ test("no thunder without a streamer, with thunder off, for other effects, or aft
   h.advance(10_000);
   await h.runDue();
   assert.equal(h.requests.length, 0);
+});
+
+test("thunder follows the controllers' nightly schedule: quieter while dimmed, none while off", async () => {
+  const cases = [
+    [{ deck1: "dim", deck2: "dim" }, DIM],
+    [{ deck1: "off", deck2: "off" }, null],
+    [{ deck1: "off", deck2: "dim" }, DIM],
+    [{ deck1: "dim", deck2: "normal" }, NORMAL],
+    [{ deck1: new Error("unreachable"), deck2: "off" }, NORMAL],
+  ];
+  for (const [scheduleStates, expected] of cases) {
+    const h = harness({ scheduleStates });
+    while (h.timers.length === 0) { h.service.tick(); h.advance(500); }
+    await new Promise((resolve) => setImmediate(resolve));   // let the state fetches land
+    h.advance(10_000);
+    await h.runDue();
+    const plays = h.requests.filter((url) => url.includes("setPlayerCmd:play"));
+    if (expected === null) assert.equal(plays.length, 0, JSON.stringify(scheduleStates));
+    else assert.ok(plays.length > 0 && plays.every((url) => url.endsWith(`:${expected}`)), `${String(Object.values(scheduleStates))}: ${plays}`);
+  }
 });

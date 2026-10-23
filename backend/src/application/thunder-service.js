@@ -8,7 +8,14 @@ import { halloweenLightningStrikes } from "./effect-render-service.js";
 // delay. The clip itself has a short silence before the crack.
 //
 // The clip, media/sounds/thunder.wav, is "Closeup Thunder Strike 01" by loganzsound,
-// https://freesound.org/people/loganzsound/sounds/840628/ (Creative Commons 0).
+// https://freesound.org/people/loganzsound/sounds/840628/ (Creative Commons 0);
+// thunder-dim.wav is the same clip 10 dB quieter.
+//
+// The thunder follows the controllers' nightly brightness schedule (SCHEDULE_STATE in
+// their /statistics): the quieter clip while the canvas is dimmed, none while it's off.
+// A different file rather than the streamer's volume, which would also change anything
+// else it plays. Each controller's state is refreshed in the background and cached, so
+// nothing waits on it at strike time.
 //
 // While the streamer is playing something, playPromptUrl plays the clip over it with
 // the music ducked. Otherwise it gets plain setPlayerCmd:play: idle, Arylic answers
@@ -21,13 +28,17 @@ const LOOKAHEAD_MS = 3000;
 // A strike whose send time has already slipped by more than this is skipped rather
 // than played late.
 const MAX_LATE_MS = 250;
+const SCHEDULE_REFRESH_MS = 15_000;
 
 export class ThunderService {
   constructor({
     playbackService,
     canvasService,
     effectService,
-    soundUrl,
+    controllerService = null,
+    // (controller, path) -> URL on that controller (TcpControllerGateway.controllerUrl).
+    controllerUrl = null,
+    soundUrls,                      // { normal, dim }
     fetchImpl = fetch,
     now = () => Date.now(),
     setTimer = setTimeout,
@@ -36,7 +47,11 @@ export class ThunderService {
     this.playbackService = playbackService;
     this.canvasService = canvasService;
     this.effectService = effectService;
-    this.soundUrl = soundUrl;
+    this.controllerService = controllerService;
+    this.controllerUrl = controllerUrl;
+    this.soundUrls = soundUrls;
+    this.scheduleStates = new Map(); // controllerId -> { state, at, inFlight }
+    this.canvasStates = new Map();   // canvasId -> last state played under, for logging
     this.fetch = fetchImpl;
     this.now = now;
     this.setTimer = setTimer;
@@ -69,8 +84,10 @@ export class ThunderService {
       if (session.status !== "playing") continue;
       const effect = this.effectService.get(session.effectId);
       if (effect?.renderer !== "halloween") continue;
-      const streamer = this.canvasService.get(session.canvasId)?.soundStreamer;
+      const canvas = this.canvasService.get(session.canvasId);
+      const streamer = canvas?.soundStreamer;
       if (!streamer) continue;
+      this.refreshScheduleStates(canvas, now);
       const parameters = this.sessionParameters(effect, session);
       if (parameters.thunder === false) continue;
 
@@ -84,7 +101,7 @@ export class ThunderService {
         const sendAt = startedAt + strikeSeconds * 1000 - leadMs;
         this.scheduled.set(key, sendAt);
         if (sendAt - now < -MAX_LATE_MS) continue;
-        this.setTimer(() => this.play(streamer, session.id), Math.max(0, sendAt - now));
+        this.setTimer(() => this.play(streamer, session.id, canvas), Math.max(0, sendAt - now));
       }
     }
     for (const [key, sendAt] of this.scheduled) {
@@ -92,16 +109,50 @@ export class ThunderService {
     }
   }
 
-  async play(streamer, sessionId) {
+  // The canvas follows its brightest controller: normal if any is normal, else dim if any
+  // is dim, else off. A controller that doesn't report a state (unreachable, or firmware
+  // without SCHEDULE_STATE) counts as normal - better a strike too loud than a silent one.
+  scheduleState(canvas) {
+    const states = [...new Set((canvas.mappings ?? []).map((mapping) => mapping.controllerId))]
+      .map((id) => this.scheduleStates.get(id)?.state ?? "normal");
+    if (states.length === 0 || states.includes("normal")) return "normal";
+    return states.includes("dim") ? "dim" : "off";
+  }
+
+  refreshScheduleStates(canvas, now) {
+    if (!this.controllerService || !this.controllerUrl) return;
+    for (const id of new Set((canvas.mappings ?? []).map((mapping) => mapping.controllerId))) {
+      const cached = this.scheduleStates.get(id) ?? {};
+      if (cached.inFlight || now - (cached.at ?? 0) < SCHEDULE_REFRESH_MS) continue;
+      const controller = this.controllerService.get(id);
+      if (!controller) continue;
+      this.scheduleStates.set(id, { ...cached, inFlight: true });
+      this.controllerUrl(controller, "/statistics/dynamic")
+        .then((url) => this.fetch(url, { signal: AbortSignal.timeout(3000) }))
+        .then((response) => response.json())
+        .then((stats) => this.scheduleStates.set(id, { state: stats.SCHEDULE_STATE ?? "normal", at: this.now() }))
+        .catch(() => this.scheduleStates.set(id, { state: cached.state, at: this.now() }));
+    }
+  }
+
+  async play(streamer, sessionId, canvas) {
     // Skip a strike whose run was stopped or replaced after it was scheduled.
     if (this.playbackService.list().every((session) => session.id !== sessionId || session.status !== "playing"))
       return;
+    const state = canvas ? this.scheduleState(canvas) : "normal";
+    if (canvas && this.canvasStates.get(canvas.id) !== state) {
+      this.canvasStates.set(canvas.id, state);
+      const effect = { normal: "full-volume thunder", dim: "thunder 10 dB quieter", off: "no thunder" }[state];
+      this.log.info?.(`[thunder] ${canvas.name ?? canvas.id}: schedule ${state} - ${effect}`);
+    }
+    if (state === "off") return;
+    const soundUrl = state === "dim" ? this.soundUrls.dim : this.soundUrls.normal;
     try {
       if (await this.isPlaying(streamer)) {
-        const prompt = await this.command(streamer, `playPromptUrl:${this.soundUrl}`);
+        const prompt = await this.command(streamer, `playPromptUrl:${soundUrl}`);
         if (prompt.trim() === "OK") return;
       }
-      await this.command(streamer, `setPlayerCmd:play:${this.soundUrl}`);
+      await this.command(streamer, `setPlayerCmd:play:${soundUrl}`);
     } catch (error) {
       this.log.warn?.(`[thunder] ${streamer}: ${error.message}`);
     }
