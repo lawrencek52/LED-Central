@@ -7,6 +7,9 @@ import { halloweenLightningStrikes } from "./effect-render-service.js";
 // upcoming strike, thunderLeadMs before it appears, to cover the streamer's start-up
 // delay. The clip itself has a short silence before the crack.
 //
+// The clip, media/sounds/thunder.wav, is "Closeup Thunder Strike 01" by loganzsound,
+// https://freesound.org/people/loganzsound/sounds/840628/ (Creative Commons 0).
+//
 // While the streamer is playing something, playPromptUrl plays the clip over it with
 // the music ducked. Otherwise it gets plain setPlayerCmd:play: idle, Arylic answers
 // playPromptUrl with "Failed", and in network mode after a previous clip it answers "OK"
