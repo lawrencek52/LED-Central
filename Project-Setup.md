@@ -1,4 +1,11 @@
-# LED-Central
+# LED-Central: original project brief
+
+> This is the brief LED-Central was started from in August 2026, kept for
+> history. Much of it has since been built, and some of it was done
+> differently; see [README.md](README.md) and [docs/](docs/) for the
+> current state. The stock server described at the end is not used by the
+> Stock Banner effect yet.
+
 Central controller for many NightDriverStrip Controllers
 
 I have multiple NightDriverStrip controllers. Each controller can operate up to four

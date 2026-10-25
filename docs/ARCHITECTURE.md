@@ -1,234 +1,193 @@
 # LED-Central Architecture
 
-## Purpose
-
-LED-Central is a Linux-hosted control plane for multiple NightDriverStrip
-controllers. It owns the user-facing model of controllers, strips, canvases,
-effects, and playback. It does not contain embedded firmware. Physical LED
-controllers remain external devices reached over the network.
-
-## System Shape
+LED-Central is a Node.js service plus a React UI. It owns the model of
+controllers, canvases, effects and playback, renders every frame itself, and
+sends the frames to NightDriverStrip controllers over the network. The
+controllers only buffer frames and show each one at its timestamp.
 
 ```mermaid
 flowchart LR
-    Browser[React web UI] -->|REST + WebSocket events| API[Node.js API]
-    API --> App[Application services]
-    App --> Registry[Controller registry]
-    App --> Canvas[Canvas mapper]
-    App --> Effects[Effect engine]
-    App --> Persistence[(Persistent store)]
-    App --> Gateway[Controller gateway]
-    Gateway -->|WebSocket frame protocol| Devices[NightDriverStrip controllers]
+    UI[React UI] -->|REST + realtime WebSocket| API[Express API]
+    API --> Play[PlaybackService]
+    Play --> Render[EffectRenderService]
+    Play --> Dist[EffectDistributionService]
+    Dist -->|mapCanvasFrame| Gateway[TcpControllerGateway]
+    Gateway -->|TCP 49152: timestamped pixel packets| Ctl[NightDriverStrip controllers]
+    Gateway -->|HTTP 80: /statistics, /ws/frames| Ctl
+    Audio[CanvasAudioService] -->|/ws/audio telemetry| Ctl
+    Audio --> Render
+    Weather[WeatherService] --> Render
+    Thunder[ThunderService] -->|LinkPlay HTTP| Speaker[Arylic streamer]
+    API --> DB[(SQLite)]
+    Ctl -->|NTP| Chrony[chrony on the host]
 ```
 
-The backend is the system of record. The browser displays state and submits
-commands; it must not communicate directly with LED controllers. This keeps
-device credentials, retry policy, frame timing, and protocol translation on
-the Linux host.
-
-## Runtime Components
-
-### Frontend
-
-The React application is organized around operator workflows:
-
-- **Dashboard**: health, controller connectivity, and active playback.
-- **Controllers**: discover, add, edit, test, and remove devices.
-- **Canvases**: define logical layouts and map physical strips to coordinates.
-- **Effects**: browse effect definitions and edit validated parameters.
-- **Playback**: select a canvas and effect, preview it, start, pause, and stop.
-
-The frontend talks to the backend through a typed API client. REST handles
-queries and commands. A browser WebSocket receives state changes, connection
-updates, and playback telemetry; it is not the device frame transport.
-
-### Backend
-
-The backend should evolve from the current `server.js` scaffold into these
-modules:
+## Source layout
 
 ```text
 backend/src/
-├── server.js                 # process startup and HTTP composition
-├── config/                   # environment parsing and defaults
-├── api/                      # routes, request validation, response mapping
-├── application/              # use cases and orchestration
-├── domain/                   # controller, strip, canvas, effect, playback
-├── infrastructure/
-│   ├── persistence/          # repository implementations
-│   ├── controllers/          # device gateway and protocol adapter
-│   └── realtime/             # browser WebSocket event publisher
-└── shared/                   # errors, clocks, IDs, and common utilities
+├── server.js          Composition: builds services, routes, realtime socket; restores playback
+├── config/            Environment parsing and defaults
+├── api/               Express routers (thin: validate, call a service, map the result)
+├── application/       PlaybackService, EffectRenderService, distribution, audio, weather,
+│                      thunder, alerts, settings, database validation
+├── domain/
+│   ├── canvases/      normalizeCanvas, mapCanvasFrame, preview grids
+│   ├── effects/       Effect definitions (default-effects.js), weather renderer
+│   └── display/       Bitmap fonts, weather icons, sun/moon math for matrix displays
+└── infrastructure/
+    ├── controllers/   TCP gateway, fake gateway (tests), host resolver
+    ├── persistence/   SQLite repositories
+    ├── realtime/      Browser WebSocket server
+    └── metrics/       Request metrics, host CPU
 ```
 
-Routes should remain thin. They validate transport input, call one application
-service, and map the result to an HTTP response. Domain objects should not
-import Express, WebSocket libraries, or database clients.
+## Domain model
 
-### Controller Gateway
+- **Controller**: name, host, port (49152), strip count, LED count and LED
+  density (LEDs/m) per strip, and whether it has a microphone. Filled in by
+  *Detect from device*, which reads the controller's `/statistics`.
+- **Canvas**: a `width x height` grid with one *mapping* per physical strip.
+  A mapping places a controller strip (`controllerId`, zero-based
+  `stripIndex`) at `x, y` with a `width x height`, a layout (`series`,
+  `parallel` or `serpentine`), rotation, direction and, for serpentine, the
+  corner LED 0 sits in and the axis of the first run. A canvas also has a
+  `stripSpacingRatio` (strip-to-strip spacing over LED-to-LED spacing, used by
+  effects that spread sideways) and an optional `soundStreamer`. A strip can
+  belong to only one canvas.
+- **Effect**: an id, name, renderer id, parameter schema with defaults, tags
+  and sort order. The built-in definitions live in
+  `domain/effects/default-effects.js` and are seeded into the database; see
+  [EFFECTS.md](EFFECTS.md).
+- **Playback session**: one per canvas: effect, parameters, frame rate, start
+  time and a session seed. Its *intent* is persisted so a restart resumes it.
 
-The gateway is an adapter around the existing NightDriverStrip TCP network
-protocol. Its interface is device-oriented and transport-independent:
+## Rendering and timing
 
-```text
-connect(controller)
-disconnect(controllerId)
-getStatus(controllerId)
-sendFrame(controller, frame)
-sendFrames(controller, frames)
-```
+`PlaybackService` runs one session per canvas on a timer at the session's
+frame rate (20 fps by default, 1-60 allowed).
 
-Each configured controller gets one managed TCP connection. The gateway owns
-connection lifecycle, reconnect backoff, send queue limits, timeouts, and
-normalization of device errors. A controller is `online` only after a
-successful connection or health response; a configured controller may remain
-`offline` without being deleted.
+1. **Lookahead.** Each tick tops the session up to `targetQueueMs` (1.5 s)
+   of future frames, one frame interval at a time, so delivery is paced at
+   the real frame rate rather than in bursts. Audio-reactive effects keep only
+   2 frames ahead, so they don't lag the sound.
+2. **Render.** `EffectRenderService` calls the effect's renderer with the
+   canvas, its parameters, the frame's timestamp and `timeSeconds` since the
+   session started. Renderers are pure functions of time and parameters (plus
+   cached simulation state for fire), so a frame is the same whenever it is
+   rendered. Inputs added per frame:
+   - **Session seed**: with *true random* on (the default), a fresh seed from
+     the OS random source per run; off, fixed seeds so runs repeat exactly.
+   - **LED density** of each mapping, resolved live from the controller at
+     playback start, so sizes tuned in LEDs on a 60 LED/m strip scale to the
+     real strip (`densityScaledSize` and friends).
+   - **Audio** (`CanvasAudioService`) for audio effects: band levels, VU and
+     beats from the controllers' microphones.
+   - **Weather** (`WeatherService`) for weather effects, always from cache.
+3. **Catch-up.** If a session falls more than 4 frames behind (a long stall),
+   it skips ahead to "now" instead of replaying the gap, and logs
+   `[playback] ... skipping ahead`: the firmware only shows the newest due
+   frame, so replaying would be wasted writes.
+4. **Timestamps.** Every frame carries the wall-clock time it should appear.
+   One canvas frame is rendered once and split per controller with the same
+   timestamp, so the controllers' clocks decide how well they line up (see
+   [Clock synchronization](#clock-synchronization)).
 
-NightDriverStrip devices listen for raw TCP pixel packets on port 49152. A
-pixel packet uses command `3`, a channel bitmask, an RGB pixel count, a
-seconds/microseconds timestamp, and RGB bytes. The browser-facing WebSocket is
-used only for operator commands and realtime events.
+## Canvas mapping
 
-## Core Domain Model
+`mapCanvasFrame` turns one canvas frame into one pixel list per mapping, in
+the strip's wire order: walking the mapping's rectangle row by row with its
+rotation, reversing it if the strip runs the other way, or zig-zagging for a
+serpentine matrix. Each result is tagged with the controller and a channel
+bitmask (`1 << stripIndex`). Effects never see wiring; a renderer only draws
+the logical grid. `previewGridForMapping` reverses the mapping to show a
+serpentine matrix as a picture on the Status tab.
 
-- **Controller**: stable ID, display name, host, port, capabilities, and
-  connection status.
-- **Strip**: physical output belonging to a controller, with LED count, color
-  order, and optional calibration settings.
-- **Canvas**: logical LED surface containing one or more strip mappings.
-- **Strip mapping**: placement, orientation, coordinate transform, and output
-  order for a strip on a canvas. Serpentine layouts are represented here, not
-  as a special case in an effect.
-- **Effect definition**: metadata, parameter schema, and renderer identifier.
-- **Playback session**: selected canvas/effect, parameters, start time, frame
-  rate, queue state, and lifecycle status.
-- **Frame**: timestamped logical pixel data plus the target canvas revision.
+## Delivery: the controller gateway
 
-The canvas mapper converts logical pixels into controller-specific frames. The
-effect engine renders against a canvas coordinate space, so one effect can
-span serial, parallel, and serpentine strip arrangements without knowing how
-the LEDs are wired.
+`TcpControllerGateway` keeps one TCP connection per controller strip
+(controller + channel mask) to port 49152.
 
-## Data Flow
+- **Packets.** NightDriverStrip's `WIFI_COMMAND_PIXELDATA64` (command 3):
+  channel mask, LED count, seconds and microseconds of the timestamp, RGB
+  bytes. Each packet is zlib-compressed inside the firmware's compressed-packet
+  wrapper when that is smaller.
+- **Replies.** The controller answers each pixel packet with a status struct
+  (`SocketResponse`: clock, buffer depth, WiFi signal, draw fps). The gateway
+  keeps the WiFi signal for its logs.
+- **Isolation.** Sends are queued per strip and never block the playback tick,
+  so one stalled controller can't freeze a canvas that spans several. Frames
+  that come due while a write is stuck are dropped, except the newest.
+- **Reconnects.** A failed write reconnects; a controller that stays
+  unreachable is retried in the background with backoff, and playback keeps
+  ticking, so it lights up again on its own after a reboot or WiFi dropout.
+  Outages and recoveries are logged with their duration.
+- **Host names.** `host-resolver.js` resolves `.local` names once at a time
+  per host and keeps the last good address, because a dead mDNS name holds a
+  Node DNS thread for about 5 s and several of them used to starve the pool.
+- **Statistics and previews.** The gateway also polls each controller's
+  `/statistics` over HTTP (draw fps, nightly schedule state, density) and,
+  while the Status tab is open, streams `/ws/frames` for live previews.
 
-1. The operator saves controller and canvas configuration through REST.
-2. The application service validates the command and persists a new revision.
-3. Playback loads the canvas revision and effect parameters.
-4. The effect engine renders timestamped logical frames.
-5. The canvas mapper splits and transforms each frame per physical strip.
-6. The controller gateway queues and sends device frames.
-7. Gateway status and playback events are published to connected browsers.
+## Clock synchronization
 
-Rendering and transport should be decoupled. A slow or offline controller must
-not block rendering for other controllers. The first implementation may use a
-bounded in-memory queue, but queue overflow and dropped-frame behavior must be
-observable and explicit.
+Controllers show a frame when their own clock reaches its timestamp, so their
+clocks must agree with this host's. `setup-linux.sh` configures chrony to
+serve NTP to the local network. The fork's firmware syncs to the host that is
+sending it frames (every 60 s while frames arrive, steering a quarter of the
+measured offset each time), and falls back to its configured internet NTP
+server otherwise. Measured on 2026-10-25, all seven controllers were within
+±6 ms of the host. Each controller reports its last sync in `/statistics`
+(`NTP_SOURCE`, `NTP_OFFSET_MS`).
 
-## API Boundaries
+## Audio
 
-The initial REST surface should grow from the current controller endpoints:
+`CanvasAudioService` subscribes to the `/ws/audio` WebSocket of every
+microphone-equipped controller on a canvas (raw per-band FFT magnitudes, VU,
+beat detection). It converts band magnitudes to a 50 dB display range with
+automatic gain control, keeps peak-hold markers, and hands renderers a single
+audio snapshot per canvas. Whether a controller has a microphone is probed on
+connect and cached (**Recheck Audio** in the UI probes again).
 
-```text
-GET    /api/health
-GET    /api/controllers
-POST   /api/controllers
-GET    /api/controllers/:id
-PATCH  /api/controllers/:id
-DELETE /api/controllers/:id
-POST   /api/controllers/:id/test
+## Sound and alerts
 
-GET    /api/canvases
-POST   /api/canvases
-GET    /api/canvases/:id
-PUT    /api/canvases/:id
-DELETE /api/canvases/:id
+- **ThunderService** plays a thunder clip on the canvas's sound streamer
+  (Arylic/LinkPlay HTTP API) for each Halloween lightning strike. Strike times
+  come from the same seeded schedule the renderer uses, and the play command
+  goes out `thunderLeadMs` early to cover the streamer's start-up delay. It
+  follows the controllers' nightly schedule: the quieter clip while dimmed,
+  nothing while off. Clips are served from `backend/media/sounds` at
+  `/sounds/<file>`.
+- **WeatherAlertNotifier** rings the speaker on matrices showing a weather
+  effect when Environment Canada issues a new alert for their postal code.
 
-GET    /api/effects
-GET    /api/effects/:id
+## Persistence
 
-GET    /api/playback
-POST   /api/playback/start
-POST   /api/playback/pause
-POST   /api/playback/stop
-```
+SQLite (`better-sqlite3`, at `EFFECT_DATABASE_PATH`) holds `controllers`,
+`canvases`, `effects`, `playback_intents` and `settings`. Configuration is
+saved before any device is contacted. At startup,
+`DatabaseValidationService` checks the stored data against what the code
+supports and repairs anything that would stop startup (for example a playback
+intent for an effect that no longer exists); everything else is reported.
+`restore()` then restarts each saved session; a session whose controllers are
+offline keeps ticking and resumes when they return.
 
-Commands should return the resulting resource or playback state. Validation
-errors use HTTP 400 with field-level details; missing resources use 404;
-conflicts such as a stale canvas revision use 409; unavailable devices use
-503. Every response should include a request ID once structured logging is
-introduced.
+## API and realtime
 
-## Persistence and Reliability
+REST under `/api` (see [backend/README.md](../backend/README.md)). The
+browser WebSocket at `/api/realtime` carries events on the `controller`,
+`playback` and `distribution` topics; it is never used for device traffic.
+`/api/status` aggregates canvases, sessions and per-strip telemetry for the
+Status tab, and `/api/metrics` exposes request metrics.
 
-Use repository interfaces in the application layer so storage can change
-without changing use cases. The recommended progression is:
+Optional shared-token authentication: with `AUTH_TOKEN` set, every `/api`
+route requires `Authorization: Bearer <token>` and the realtime socket
+requires `?token=`. There are no user accounts; keep LED-Central on a trusted
+network.
 
-1. In-memory repositories for the first vertical slice and tests.
-2. SQLite for local, single-host persistence of configuration and playback
-   history.
-3. Optional PostgreSQL only if multi-user or multi-host deployment becomes a
-   real requirement.
+## Testing
 
-Persist configuration before attempting device communication. On restart,
-reload controllers, canvases, and effect settings, then reconnect controllers
-without automatically resuming playback until resume behavior is explicitly
-configured.
-
-## Security and Operations
-
-- Bind to localhost by default; make network binding explicit in configuration.
-- Restrict CORS to configured frontend origins.
-- Add authentication before exposing the service beyond a trusted LAN.
-- Validate all network destinations and numeric limits supplied by users.
-- Keep device traffic and browser traffic on separate adapters.
-- Use structured logs with controller ID, playback ID, and request ID.
-- Expose health separately from readiness: health means the process is alive;
-  readiness includes required persistence and gateway initialization.
-
-### Authentication Flow
-
-Authentication is an optional shared bearer-token boundary around the backend:
-
-1. Set `AUTH_TOKEN` in the backend environment.
-2. HTTP clients send `Authorization: Bearer <token>` to every `/api` route.
-3. The browser sends the same token as the `token` query parameter when opening
-  `/api/realtime`, because browser WebSockets cannot set custom headers.
-4. Invalid HTTP credentials receive `401`; invalid WebSocket upgrades are
-  rejected before a connection is created.
-
-The frontend reads `VITE_API_TOKEN` and `VITE_WS_TOKEN` for these two channels.
-With an empty `AUTH_TOKEN`, authentication is disabled for local development.
-This is a shared token, not user authentication: there are currently no users,
-roles, token expiry, refresh flow, or audit identity. Query-string WebSocket
-tokens can appear in proxy or access logs, so production deployments should
-prefer TLS, restricted log access, and a future short-lived handshake token.
-
-## Delivery Order
-
-1. Extract configuration, validation, error handling, and controller repository.
-2. Add controller gateway with a fake adapter for tests and a real TCP adapter
-  for NightDriverStrip devices.
-3. Replace the Vite demo with the controller dashboard and API client.
-4. Add persistent controller and canvas configuration.
-5. Implement canvas mapping with fixtures for series, parallel, and serpentine
-   layouts.
-6. Add one end-to-end effect and playback path before importing larger effect
-   libraries.
-7. Add browser realtime events, reconnect behavior, metrics, and authentication.
-
-The first meaningful milestone is one effect rendered onto one canvas and sent
-to multiple configured controllers, with a fake gateway proving the mapping
-and queue behavior in automated tests.
-
-## Real-World Validation
-
-The wave-effect test passed both validation levels: all 23 backend tests passed
-from the test-harness perspective, and a physical eyeball check confirmed that
-the strips on `deck1.local` were correctly playing the wave effect. The live
-test ran for two minutes across all four strips, with 215 LEDs per strip.
-
-The browser realtime channel now connects to `/api/realtime`, subscribes to
-controller, playback, and distribution topics, and reconnects with bounded
-exponential backoff. The backend exposes `/api/metrics` and supports optional
-bearer-token authentication through `AUTH_TOKEN`; the same token protects the
-browser WebSocket handshake.
+`make test` runs the backend's Node test suite (renderers, canvas mapping,
+gateway framing, playback timing, persistence) against a fake gateway;
+`npm run lint` in `frontend/` checks the UI. Changes are also verified on the real installation:
+the Pi, its seven controllers, and frame captures from `/ws/frames`.

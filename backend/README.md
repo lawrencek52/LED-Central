@@ -1,130 +1,120 @@
 # LED-Central Backend
 
-The backend is a Node.js/Express service that stores LED-Central configuration,
-renders effects, maps canvases to physical strips, and sends timestamped frames
-to NightDriverStrip controllers.
+Node.js (22 tested) and Express. It stores the configuration in SQLite,
+renders every effect frame, maps canvases onto physical strips, and sends
+timestamped frames to NightDriverStrip controllers. See
+[../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) for how the pieces fit.
 
-## Install and Run
+## Run
 
 ```bash
 npm install
-npm run dev       # nodemon development server
-npm start         # production-style server
-npm test          # Node test suite
+npm run dev       # nodemon, restarts on source changes
+npm start         # plain node
+npm test          # Node test suite (uses a fake controller gateway)
 ```
 
-The default API address is `http://localhost:3001/api`.
+The API is at `http://<host>:3001/api`.
 
 ## Configuration
 
-Copy the example environment file when present:
+Settings come from the environment or `backend/.env` (copy `.env.example`):
 
-```bash
-cp .env.example .env
-```
+| Variable | Default | Meaning |
+| - | - | - |
+| `HOST` | `0.0.0.0` | Address to bind to |
+| `PORT` | `3001` | API port |
+| `NODE_ENV` | `development` | |
+| `API_TIMEOUT` | `30000` | Request timeout, ms |
+| `EFFECT_DATABASE_PATH` | `./data/led-central.db` | SQLite database |
+| `SOUNDS_DIRECTORY` | `./media/sounds` | Clips served at `/sounds/<file>` to network speakers |
+| `PUBLIC_BASE_URL` | `http://<LAN IPv4>:<PORT>` | How speakers reach `/sounds`; set it if the automatic LAN address is wrong |
+| `AUTH_TOKEN` | empty | When set, every `/api` route needs `Authorization: Bearer <token>` |
+| `LOG_LEVEL` | `info` | |
+| `CORS_ORIGIN` | `*` | Comma-separated allowed origins |
 
-Supported settings include:
-
-```text
-NODE_ENV=development
-HOST=0.0.0.0
-PORT=3001
-API_TIMEOUT=30000
-EFFECT_DATABASE_PATH=./data/led-central.db
-AUTH_TOKEN=
-LOG_LEVEL=info
-CORS_ORIGIN=http://localhost:5173
-```
-
-Controllers are configured with their raw TCP pixel port, normally `49152`.
-For Status-tab previews and controller statistics, the gateway also contacts
-the controller HTTP server on port `80`, including `/statistics/static`,
-`/statistics/dynamic`, and `/ws/frames`.
+Controllers are reached on TCP port 49152 for frames and on their web server
+(port 80) for `/statistics`, `/ws/frames` (previews) and `/ws/audio`
+(microphone telemetry).
 
 ## API
 
 ### Health and status
 
-- `GET /api/health` - process health check.
-- `GET /api/status` - canvas playback state and per-strip telemetry.
-- `GET /api/metrics` - request and response metrics.
-
-`/api/status` reports canvas name, active effect, target FPS, controller and
-strip identity, queue depth, preview RGB data, preview receive FPS, controller
-draw FPS (`LED_FPS`), and preview throughput in KiB/s.
+| Method | Path | |
+| - | - | - |
+| GET | `/api/health` | `{"status":"ok"}` |
+| GET | `/api/status` | Every canvas: effect, target fps, and per strip its controller, queue depth, preview, receive fps, controller draw fps and throughput |
+| GET | `/api/metrics` | Request metrics |
 
 ### Controllers
 
-- `GET /api/controllers`
-- `POST /api/controllers`
-- `GET /api/controllers/:id`
-- `PATCH /api/controllers/:id`
-- `POST /api/controllers/:id/connect`
-- `POST /api/controllers/:id/disconnect`
-- `POST /api/controllers/:id/test` (reserved; not implemented)
-- `DELETE /api/controllers/:id`
+| Method | Path | |
+| - | - | - |
+| GET, POST | `/api/controllers` | List, register |
+| POST | `/api/controllers/detect` | `{"host": "deck1.local"}`: read strip count, LED counts, LED density and matrix size from the controller |
+| GET, PATCH, DELETE | `/api/controllers/:id` | |
+| POST | `/api/controllers/:id/connect`, `/disconnect` | |
+| POST | `/api/controllers/:id/recheck-audio` | Probe again for a microphone |
+| POST | `/api/controllers/:id/preview/start`, `/preview/stop` | Stream `/ws/frames` for the Status tab |
+| POST | `/api/controllers/:id/test` | Reserved; returns 501 |
 
-Controller configuration supports 1-16 strips and one LED count per strip.
+A controller has 1-16 strips, each with an LED count and LED density.
 
 ### Canvases
 
-- `GET /api/canvases`
-- `POST /api/canvases`
-- `GET /api/canvases/:id`
-- `PUT /api/canvases/:id`
-- `DELETE /api/canvases/:id`
+| Method | Path | |
+| - | - | - |
+| GET, POST | `/api/canvases` | |
+| GET, PUT, PATCH, DELETE | `/api/canvases/:id` | |
+| POST | `/api/canvases/:id/alert-sound` | Test the weather-alert sound: `{"seconds": 1-60, "volume": 0-100}` |
 
-Canvas mappings use zero-based `stripIndex` values and support `series`,
-`parallel`, and `serpentine` layouts, positions, dimensions, rotation, and
-reversal. A physical controller strip can belong to only one canvas.
+A canvas has `name`, `width`, `height`, `mappings`, `stripSpacingRatio` and
+`soundStreamer`. Each mapping has `controllerId`, a zero-based `stripIndex`,
+`layout` (`series`, `parallel`, `serpentine`), `x`, `y`, `width`, `height`,
+`rotation`, `reversed`, and for serpentine `originCorner` and `axis`. A strip
+can belong to only one canvas.
 
-### Effects and playback
+### Effects, playback and settings
 
-- `GET /api/effects`
-- `POST /api/effects`
-- `GET /api/effects/:id`
-- `PATCH /api/effects/:id`
-- `DELETE /api/effects/:id`
-- `GET /api/playback`
-- `POST /api/playback/start`
-- `POST /api/playback/:id/stop`
-
-Playback sessions are independent per canvas. Starting another effect on a
-canvas stops its current session. Each session renders and sends 100 timestamped
-frames ahead, then refills with 50 frames while more than 50 frames remain in
-the look-ahead queue.
-
-Example:
+| Method | Path | |
+| - | - | - |
+| GET, POST | `/api/effects` | |
+| GET, PATCH, DELETE | `/api/effects/:id` | PATCH renames (`name`) or reorders (`sortOrder`) |
+| GET | `/api/playback` | Running sessions |
+| POST | `/api/playback/start` | `{"canvasId", "effectId", "parameters", "fps"}`; replaces the canvas's current session |
+| POST | `/api/playback/:id/stop` | |
+| GET, PATCH | `/api/settings` | `{"trueRandom": true}` |
 
 ```bash
 curl -X POST http://localhost:3001/api/playback/start \
   -H 'Content-Type: application/json' \
-  -d '{"canvasId":"canvas-id","effectId":"wave","parameters":{"color":"#00ffff"}}'
+  -d '{"canvasId":"<id>","effectId":"nds-fire","parameters":{"palette":"blue"},"fps":30}'
 ```
 
-### Distribution and realtime
+Sessions keep 1.5 s of timestamped frames queued (2 frames for audio
+effects) and are restored when the backend restarts.
 
-- `POST /api/distribution/frames` - distribute a supplied frame batch.
-- WebSocket `ws://localhost:3001/api/realtime` - browser commands and events.
+### Raw frames
 
-The TCP gateway serializes connection and send operations per controller,
-handles closed sockets, retries failed writes, and bounds stalled writes with a
-timeout. The fake gateway is used by automated tests.
+| Method | Path | |
+| - | - | - |
+| POST | `/api/distribution/frames` | Send a supplied batch of controller frames |
+| POST | `/api/distribution/canvases/:id/frames` | `{"frame": {"timestamp", "pixels"}}`: map one canvas frame and send it |
 
-## Persistence and Source Layout
+### Realtime
 
-SQLite stores controllers, canvases, and effect definitions in the configured
-database path. The main source areas are:
+WebSocket at `/api/realtime` (with `?token=` when `AUTH_TOKEN` is set):
+events on the `controller`, `playback` and `distribution` topics.
+
+## Source layout
 
 ```text
 src/
-├── api/             Express route adapters
-├── application/     Playback, rendering, distribution, and services
-├── domain/          Canvas mapping and effect definitions
-├── infrastructure/  SQLite, TCP gateway, metrics, and realtime adapters
-└── server.js        Application composition and startup
+├── api/             Express routers
+├── application/     Playback, rendering, distribution, audio, weather, thunder, alerts, settings
+├── domain/          Canvas mapping, effect definitions, matrix display helpers
+├── infrastructure/  SQLite repositories, TCP gateway, host resolver, realtime, metrics
+└── server.js        Composition and startup
+media/sounds/        Sound clips (see its README for sources and licenses)
 ```
-
-When authentication is enabled, every `/api` route requires
-`Authorization: Bearer <AUTH_TOKEN>`. The browser realtime client passes its
-token in the WebSocket handshake query parameter.

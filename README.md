@@ -1,106 +1,104 @@
 # LED-Central
 
-LED-Central is a Linux-hosted control plane for multiple NightDriverStrip LED
-controllers. It provides one browser interface for controller registration,
-canvas layout, effect selection, playback, and live output status.
+LED-Central drives many NightDriverStrip LED controllers as one display. It
+runs on a Linux machine (a Raspberry Pi 4 in the reference install), renders
+effects onto *canvases* that span strips on several controllers, and streams
+timestamped frames to each controller over WiFi. One browser UI replaces
+opening every controller's own web page.
 
-NightDriverStrip controllers receive timestamped RGB frames over raw TCP,
-normally on port `49152`. LED-Central renders effects in a logical canvas,
-maps that canvas to physical strips, and sends the resulting frames to the
-configured controllers. The controller firmware remains in the sibling
-`../NightDriverStrip` project.
+It is built on the work of [Dave Plummer](https://github.com/davepl) and the
+NightDriver contributors; see [Credits](#credits).
 
-## Current Features
+## What it does
 
-- SQLite-backed controller, canvas, and effect configuration.
-- Canvas layouts supporting series, parallel, serpentine, rotation, reversal,
-  and multiple controllers.
-- Built-in `solid`, `gradient`, and `wave` effects.
-- Continuous playback with independent scheduling per canvas.
-- A 100-frame look-ahead buffer, refilled with 50 frames while more than 50
-   frames remain queued.
-- Serialized TCP sends and reconnect handling per controller.
-- Optional bearer-token authentication for the API and browser realtime socket.
-- Status view showing each canvas, active effect, target FPS, mapped strips,
-  queue depth, controller preview, receive FPS, draw FPS, and KiB/s.
+- **Canvases across controllers.** A canvas is a logical grid. Each strip is
+  mapped onto it in series, in parallel, or as a serpentine matrix, with
+  position, rotation and direction, so one effect can run across a deck rail
+  made of eleven strips on three controllers.
+- **39 effects**, including ports of NightDriverStrip's and NDSCPP's classics,
+  audio-reactive effects fed by the controllers' microphones, holiday effects
+  with thunder on a network speaker, and a weather display for HUB75 matrices.
+  See [docs/EFFECTS.md](docs/EFFECTS.md).
+- **Real-world geometry.** Effects read each strip's LED density (LEDs per
+  meter, detected from the controller), so a fire or a meteor is the same
+  physical size on a 30 LED/m strip as on a 60 LED/m one.
+- **Synchronized playback.** Frames are rendered 1.5 s ahead and stamped with
+  the time they should appear. Controllers sync their clocks to this machine
+  over NTP while it drives them, so all of them show a frame within a few
+  milliseconds of each other.
+- **Resilience.** Playback survives controller reboots and WiFi dropouts and
+  resumes on its own; running sessions are restored when LED-Central restarts.
+- **Live status.** A Status tab shows every canvas with per-strip previews,
+  receive and draw frame rates, throughput and queue depth.
 
-## Project Structure
+## Tested hardware
+
+| Role | Hardware | Notes |
+| - | - | - |
+| LED-Central host | Raspberry Pi 4 Model B, 8 GB | Ubuntu 26.04 LTS, Node.js 22, chrony as the LAN time server, on 5 GHz WiFi |
+| Strip controller | Seeed XIAO ESP32-C5 | Deck1, Deck2, Garage: 4 channels of WS2812B-type strips, about 216 LEDs each at 60 LED/m (Garage: 2 x 120) |
+| Strip controller | Seeed XIAO ESP32-S3 Sense on a custom carrier | Deck3: 3 strips of about 108 LEDs at 30 LED/m, PDM microphone for audio effects |
+| Matrix controller | Seeed XIAO ESP32-S3 Sense | Matrix-16x16: one 16 x 16 WS2812B serpentine matrix (256 LEDs) |
+| Matrix controller | Waveshare ESP32-S3-RGB-Matrix | Matrix-64x64 (one 64 x 64 HUB75 panel) and Matrix-128x64 (two chained panels); onboard microphones and speaker |
+| Sound | Arylic S10+ network streamers | Thunder for the Halloween effect |
+
+The controllers run the [NightDriverStrip fork](https://github.com/lawrencek52/NightDriverStrip)
+that LED-Central was developed alongside. Its README lists the build
+environment for each board. Stock NightDriverStrip firmware also accepts
+LED-Central's frames, but per-strip lengths, LED density, clock sync with
+LED-Central and the crash reports used by the Status tab come from the fork.
+
+## Quick start
+
+```bash
+./setup-linux.sh   # installs Node.js and chrony if needed, npm dependencies, .env, LAN time server
+make dev           # backend on :3001, frontend on :5173
+```
+
+Then open `http://<host>:5173`, register a controller (**Detect from device**
+fills in its strips), build a canvas and start an effect. The
+[Quick Start guide](QUICKSTART.md) walks through it.
+
+## Project structure
 
 ```text
 LED-Central/
-├── backend/       Node.js and Express API
-├── frontend/      React and Vite operator UI
-├── docs/          Architecture and Linux development notes
-├── scripts/       Development helpers
+├── backend/        Node.js + Express API, renderers, controller gateway, SQLite store
+│   └── media/sounds/  Clips served to network speakers (thunder)
+├── frontend/       React + Vite operator UI
+├── docs/           Architecture, effects, Linux development notes, todo list
+├── scripts/        dev-all.sh (runs both servers, logs to ~/led-logs), stock_server.py
 ├── Makefile
 └── setup-linux.sh
 ```
 
-## Requirements
-
-- Linux, preferably Ubuntu or Debian
-- Node.js and npm
-- A NightDriverStrip controller reachable from the Linux host
-
-## Setup
-
-Run the automated setup:
-
-```bash
-./setup-linux.sh
-```
-
-Or install dependencies manually:
-
-```bash
-cd backend && npm install
-cd ../frontend && npm install
-```
-
-## Development
-
-Start both services:
-
-```bash
-make dev
-```
-
-The services are also available separately:
-
-```bash
-cd backend && npm run dev       # API on http://localhost:3001
-cd frontend && npm run dev      # UI on http://localhost:5173
-```
-
-The helper script writes backend and frontend logs to
-`~/led-logs/led-central-backend.log` and `~/led-logs/led-central-frontend.log` (override the folder with `LED_CENTRAL_LOG_DIR`).
-
-Run checks and builds:
-
-```bash
-make test
-make build
-```
-
-For a LAN installation, configure the backend `HOST` as `0.0.0.0` and open
-the frontend using the Linux host's LAN address. The frontend derives its API
-host from the browser hostname unless `VITE_API_URL` is configured.
-
-## Main UI Areas
-
-The application opens on **Effect selection**. Tabs are ordered:
-
-1. Effect selection: choose a canvas and effect, edit parameters, and start or
-   stop playback.
-2. Status: inspect active effects and controller output telemetry. This view
-   refreshes once per second.
-3. Canvas definition: create and map logical canvases to controller strips.
-4. Controllers: register devices, edit strip counts, and connect or disconnect.
-
 ## Documentation
 
-- [Backend API and configuration](backend/README.md)
-- [Frontend development](frontend/README.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Linux development](docs/LINUX-DEVELOPMENT.md)
-- [Quick start](QUICKSTART.md)
+- [Quick Start](QUICKSTART.md): install, first controller, first canvas, first effect
+- [Effects](docs/EFFECTS.md): every effect and its parameters
+- [Architecture](docs/ARCHITECTURE.md): how rendering, mapping, timing and delivery work
+- [Backend](backend/README.md): API endpoints and configuration
+- [Frontend](frontend/README.md): UI development
+- [Linux development](docs/LINUX-DEVELOPMENT.md): tooling, debugging, troubleshooting
+- [Todo list](docs/TODO.md): known open issues
+- [Original project brief](Project-Setup.md): the August 2026 plan this grew from
+
+## Credits
+
+- **[NightDriverStrip](https://github.com/PlummersSoftwareLLC/NightDriverStrip)**
+  by Dave Plummer and its contributors (Rutger van Bergen, Robert Lipe and
+  many others) is the controller firmware LED-Central drives. Its wire
+  protocol, timestamped frame buffering and many of its effects are the
+  foundation of this project.
+- **[NDSCPP](https://github.com/PlummersSoftwareLLC/NDSCPP)**, Dave Plummer's
+  NightDriver server (with Rutger van Bergen and others), was LED-Central's
+  starting point: the idea of a central server rendering canvases for many
+  controllers, and the effects ported here with the `nds-` prefix.
+- The Halloween effect's eyes and lightning are inspired by WLED's
+  "Halloween Eyes" and "Lightning" effects (<https://github.com/wled/WLED>,
+  building on Harm Aldick's WS2812FX); its default glow color is Trimlight's
+  "Jack-O-Lantern Glow". No code was taken from either.
+- Thunder clip: "Closeup Thunder Strike 01" by loganzsound on
+  [freesound.org](https://freesound.org/people/loganzsound/sounds/840628/), CC0.
+- Weather data: Environment and Climate Change Canada (weather.gc.ca) and the
+  NRCan Geolocator, both free and key-less.

@@ -4,18 +4,15 @@ This project is configured specifically for Linux systems. All tools, scripts, a
 
 ## System Requirements
 
-- **OS**: Linux (Ubuntu/Debian recommended)
-- **Kernel**: 4.4 or later
-- **RAM**: 2GB minimum (4GB recommended for comfortable development)
-- **Disk**: 2GB free space for dependencies and builds
-
-## Supported Linux Distributions
-
-- Ubuntu 18.04 LTS or later
-- Debian 10 (Buster) or later
-- Linux Mint 19 or later
-- Elementary OS 5 or later
-- Other Debian/Ubuntu-based distributions
+- **OS**: a Debian- or Ubuntu-based Linux. Tested on Ubuntu 26.04 LTS on a
+  Raspberry Pi 4 (8 GB), and on an Ubuntu laptop for development.
+- **Node.js**: 22 (tested); the setup script installs the distribution's
+  Node.js if none is present.
+- **RAM**: 2 GB minimum; the Pi runs LED-Central in about 400 MB. Avoid
+  leaving a browser open on the Pi itself (see [TODO.md](TODO.md)).
+- **Disk**: 2 GB free for dependencies and builds.
+- **Network**: the same LAN as the controllers. The machine also serves NTP
+  time to the controllers via chrony.
 
 ## Quick Setup
 
@@ -29,6 +26,8 @@ This script automatically:
 - Installs Node.js if not present
 - Installs all npm dependencies
 - Creates `.env` configuration files
+- Installs and configures chrony to serve NTP time to the local network, so
+  the controllers' clocks stay in step with the frame timestamps
 
 ### Alternative: Using Make
 

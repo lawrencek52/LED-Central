@@ -31,19 +31,24 @@ VITE_WS_TOKEN=
 
 ## UI Workflows
 
-The page opens on **Effect selection**. The tabs are ordered Effect selection,
-Status, Canvas definition, and Controllers.
+The page opens on **Effects**. The tabs are Effects, Status, Canvases and
+Controllers.
 
-- **Effect selection** chooses a canvas and effect, edits renderer parameters,
-  and starts or stops playback.
+- **Effects**: under *Run effects*, one row per canvas to pick an effect and
+  start, restart or stop it. The effect library beside it selects an effect to
+  edit: its parameters and frame rate (kept in the browser's localStorage, per
+  effect), its display name, and its place in the list (drag to reorder). The
+  *True random* / *Pseudo random* setting is here too.
 - **Status** shows every canvas, its active effect and target FPS, plus each
-  mapped strip's controller identity, address, preview, receive FPS, draw FPS,
-  KiB/s, and queued frames. Status data refreshes every second and strip
-  details stack on narrow displays.
-- **Canvas definition** creates logical surfaces and maps them to physical
-  controller strips with series, parallel, or serpentine layouts.
-- **Controllers** registers devices, manages strip counts and LED counts, and
-  connects or disconnects devices.
+  mapped strip's controller identity, address, live preview, receive FPS,
+  draw FPS, KiB/s and queued frames. It refreshes every second; strip details
+  stack on narrow displays.
+- **Canvases** creates logical surfaces and maps controller strips onto them
+  in series, parallel or serpentine layouts, with the strip spacing ratio and
+  an optional sound streamer.
+- **Controllers** registers devices (*Detect from device* reads their strips
+  from the controller), edits strip and LED counts, rechecks audio, and
+  connects or disconnects them.
 
 ## Source Layout
 
