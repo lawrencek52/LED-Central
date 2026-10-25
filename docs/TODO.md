@@ -19,6 +19,21 @@ keeps the last event type.
 - Possible safety net: an early-OOM killer on the Pi, so a runaway browser is
   killed before the system starts thrashing.
 
+## matrix-16x16 RMT interrupt crash during a flash write
+
+Found 2026-10-25: a core dump saved some time after the 2026-10-22 fixes (build
+`386450b1`, decoded from `NightDriverStrip/elf-archive/crashes/matrix-16x16-386450b1.*`).
+The board panicked inside the ESP-IDF legacy RMT driver's interrupt handler
+(`rmt_driver_isr_default`, `rmt.c:834`) while a SPI flash command was in
+progress (`spi_flash_hal_common_command`). The likely cause is the RMT
+interrupt touching flash- or PSRAM-cached memory while a flash write (a
+settings or effects save) has the cache disabled. Only matrix-16x16 (S3,
+RMT output) has shown it, once in about 2.6 days.
+
+- Next step: check whether the RMT driver and its LED byte buffers are
+  IRAM/internal-RAM safe (`CONFIG_RMT_ISR_IRAM_SAFE`, buffer placement), and
+  whether deck3 (also S3/RMT) can hit it too.
+
 ## Diagnosing a controller crash (reference)
 
 The 2026-10-22 crash loops on deck1, deck3 and matrix-16x16 were two
