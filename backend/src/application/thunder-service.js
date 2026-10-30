@@ -143,7 +143,7 @@ export class ThunderService {
     if (canvas && this.canvasStates.get(canvas.id) !== state) {
       this.canvasStates.set(canvas.id, state);
       const effect = { normal: "full-volume thunder", dim: "thunder 10 dB quieter", off: "no thunder" }[state];
-      this.log.info?.(`[thunder] ${canvas.name ?? canvas.id}: schedule ${state} - ${effect}`);
+      this.log.info?.(`${new Date().toISOString()} [thunder] ${canvas.name ?? canvas.id}: schedule ${state} - ${effect}`);
     }
     if (state === "off") return;
     const soundUrl = state === "dim" ? this.soundUrls.dim : this.soundUrls.normal;
@@ -154,7 +154,7 @@ export class ThunderService {
       }
       await this.command(streamer, `setPlayerCmd:play:${soundUrl}`);
     } catch (error) {
-      this.log.warn?.(`[thunder] ${streamer}: ${error.message}`);
+      this.log.warn?.(`${new Date().toISOString()} [thunder] ${streamer}: ${error.message}`);
     }
   }
 

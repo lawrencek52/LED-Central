@@ -19,20 +19,21 @@ keeps the last event type.
 - Possible safety net: an early-OOM killer on the Pi, so a runaway browser is
   killed before the system starts thrashing.
 
-## matrix-16x16 RMT interrupt crash during a flash write
+## Watch: S3 RMT interrupt crash during a flash write (fix deployed 2026-10-30)
 
-Found 2026-10-25: a core dump saved some time after the 2026-10-22 fixes (build
-`386450b1`, decoded from `NightDriverStrip/elf-archive/crashes/matrix-16x16-386450b1.*`).
-The board panicked inside the ESP-IDF legacy RMT driver's interrupt handler
-(`rmt_driver_isr_default`, `rmt.c:834`) while a SPI flash command was in
-progress (`spi_flash_hal_common_command`). The likely cause is the RMT
-interrupt touching flash- or PSRAM-cached memory while a flash write (a
-settings or effects save) has the cache disabled. Only matrix-16x16 (S3,
-RMT output) has shown it, once in about 2.6 days.
+matrix-16x16 (2026-10-25 and 2026-10-28) and deck3 (2026-10-28) panicked
+with an interrupt watchdog in `rmt_driver_isr_default` ->
+`xRingbufferSendFromISR` while core 1 was parked for a SPIFFS write of
+`/current.cfg`. The ringbuffer was the IR remote's RMT RX buffer, which plain
+malloc had put in PSRAM (PSRAM-default threshold 96). The legacy driver
+registers one shared RMT ISR with the first channel's flags, and the WS281x
+output installs first with `ESP_INTR_FLAG_IRAM`, so the remote's `0` flags
+didn't keep it off the cache-disabled path. Fixed in NightDriverStrip
+`remotecontrol.cpp` by routing that install's allocations to internal RAM;
+OTA'd to deck3 and matrix-16x16. Dumps are in `elf-archive/crashes/`.
 
-- Next step: check whether the RMT driver and its LED byte buffers are
-  IRAM/internal-RAM safe (`CONFIG_RMT_ISR_IRAM_SAFE`, buffer placement), and
-  whether deck3 (also S3/RMT) can hit it too.
+- If either board shows `CRASH_PRESENT` again, check whether it's the same
+  signature (task `ipc1`, `excVaddr 0xbad00c11`, RMT ISR in the dump).
 
 ## Diagnosing a controller crash (reference)
 

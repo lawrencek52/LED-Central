@@ -217,7 +217,7 @@ export class PlaybackService {
         await this.start(intent);
       } catch (error) {
         console.warn(
-          `[playback] couldn't restore ${intent.effectId} on canvas ${intent.canvasId}, dropping it: ${error.message}`,
+          `${new Date().toISOString()} [playback] couldn't restore ${intent.effectId} on canvas ${intent.canvasId}, dropping it: ${error.message}`,
         );
         this.playbackRepository.remove(intent.canvasId);
       }
@@ -400,7 +400,7 @@ export class PlaybackService {
           // "normal" again (a fresh frame was just sent targetQueueMs out).
           const gapMs = targetLastFrameAt - firstFrameAt;
           console.warn(
-            `[playback] session ${session.id} (canvas ${session.canvasId}) fell ${framesNeeded} frames behind - skipping ahead ${Math.round(gapMs)}ms instead of catching up, which will show as a brief freeze`,
+            `${new Date().toISOString()} [playback] session ${session.id} (canvas ${session.canvasId}) fell ${framesNeeded} frames behind - skipping ahead ${Math.round(gapMs)}ms instead of catching up, which will show as a brief freeze`,
           );
           this.eventHub?.publish({
             topic: "playback",
