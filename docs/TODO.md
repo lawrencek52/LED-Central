@@ -35,6 +35,28 @@ OTA'd to deck3 and matrix-16x16. Dumps are in `elf-archive/crashes/`.
 - If either board shows `CRASH_PRESENT` again, check whether it's the same
   signature (task `ipc1`, `excVaddr 0xbad00c11`, RMT ISR in the dump).
 
+## Watch: deck dropouts from spurious WiFi stall reconnects (fix deployed 2026-11-22)
+
+From 2026-11-15 to 2026-11-22, Deck1/Deck2/Deck3 logged 110/144/25 `WIFI_STALL_RECONNECTS`.
+Every one fired while the gateway was still answering (reply age < 5 s), and on Deck2 and Deck3
+each one cost a 45-57 s dropout. Two fixes in NightDriverStrip `network.cpp`:
+
+- The stall check read `millis()` before the last-reply time, so a ping reply landing in
+  between wrapped the unsigned age to ~49 days and forced a reconnect. Age is now computed
+  load-first and clamped at 0 (`GatewayReplyAgeMs`).
+- The WiFi retry backoff never reset after a successful connect, so it sat at 60 s; a
+  reconnect that missed first time stayed dark a full minute. It now resets while connected.
+
+Also fixed: `PatternSerendipity` replayed every missed 3 ms timer step after sitting idle,
+tripping the task watchdog on Matrix-128x64 and Matrix-64x64 (dumps in `elf-archive/crashes/`).
+
+- In a week, `WIFI_STALL_RECONNECTS` should be near 0 and the ~55 s outages in the backend
+  log should be gone. If stalls continue, check `WIFI_GATEWAY_REPLY_AGE_MS` before each one in
+  `~/led-logs/deck-monitor.log`.
+- matrix-16x16 has since been dismantled and removed from the OTA list.
+- Deck3's ArduinoOTA listener had stopped answering after 23 days up; it took a
+  `POST /reset board=true` before espota worked. Watch for it again.
+
 ## Diagnosing a controller crash (reference)
 
 The 2026-10-22 crash loops on deck1, deck3 and matrix-16x16 were two

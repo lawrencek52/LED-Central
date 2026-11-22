@@ -38,7 +38,6 @@ NightDriver contributors; see [Credits](#credits).
 | LED-Central host | Raspberry Pi 4 Model B, 8 GB | Ubuntu 26.04 LTS, Node.js 22, chrony as the LAN time server, on 5 GHz WiFi |
 | Strip controller | Seeed XIAO ESP32-C5 | Deck1, Deck2, Garage: 4 channels of WS2812B-type strips, about 216 LEDs each at 60 LED/m (Garage: 2 x 120) |
 | Strip controller | Seeed XIAO ESP32-S3 Sense on a custom carrier | Deck3: 3 strips of about 108 LEDs at 30 LED/m, PDM microphone for audio effects |
-| Matrix controller | Seeed XIAO ESP32-S3 Sense | Matrix-16x16: one 16 x 16 WS2812B serpentine matrix (256 LEDs) |
 | Matrix controller | Waveshare ESP32-S3-RGB-Matrix | Matrix-64x64 (one 64 x 64 HUB75 panel) and Matrix-128x64 (two chained panels); onboard microphones and speaker |
 | Sound | Arylic S10+ network streamers | Thunder for the Halloween effect |
 
