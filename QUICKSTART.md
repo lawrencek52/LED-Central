@@ -50,7 +50,9 @@ curl http://localhost:3001/api/health
 ```
 
 On the reference Raspberry Pi, a desktop autostart entry runs `make dev` at
-login, so LED-Central comes back after a power cut. Stop the servers with
+login, so LED-Central comes back after a power cut.
+[raspberry-pi/setup-pi.sh](raspberry-pi/README.md) installs it, along with
+the WiFi watchdog and daily database backups. Stop the servers with
 Ctrl+C, or kill the `nodemon` and `vite` processes.
 
 ## 4. Register a controller

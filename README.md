@@ -54,6 +54,10 @@ LED-Central and the crash reports used by the Status tab come from the fork.
 make dev           # backend on :3001, frontend on :5173
 ```
 
+On a Raspberry Pi, run `raspberry-pi/setup-pi.sh` instead: it runs
+`setup-linux.sh` and adds start-at-login, the WiFi watchdog and daily
+database backups (see [raspberry-pi/README.md](raspberry-pi/README.md)).
+
 Then open `http://<host>:5173`, register a controller (**Detect from device**
 fills in its strips), build a canvas and start an effect. The
 [Quick Start guide](QUICKSTART.md) walks through it.
@@ -66,6 +70,7 @@ LED-Central/
 │   └── media/sounds/  Clips served to network speakers (thunder)
 ├── frontend/       React + Vite operator UI
 ├── docs/           Architecture, effects, Linux development notes, todo list
+├── raspberry-pi/   Pi host setup, WiFi watchdog, network monitor, database backups
 ├── scripts/        dev-all.sh (runs both servers, logs to ~/led-logs), stock_server.py
 ├── Makefile
 └── setup-linux.sh
@@ -79,6 +84,7 @@ LED-Central/
 - [Backend](backend/README.md): API endpoints and configuration
 - [Frontend](frontend/README.md): UI development
 - [Linux development](docs/LINUX-DEVELOPMENT.md): tooling, debugging, troubleshooting
+- [Raspberry Pi host](raspberry-pi/README.md): setting up or replacing the Pi, WiFi watchdog, backups
 - [Todo list](docs/TODO.md): known open issues
 - [Original project brief](Project-Setup.md): the August 2026 plan this grew from
 

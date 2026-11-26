@@ -1,0 +1,13 @@
+[Unit]
+Description=wifi-watchdog - recover wlan0 when it is associated but passes no traffic
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/wifi-watchdog
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
